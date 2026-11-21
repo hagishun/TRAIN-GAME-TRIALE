@@ -1,0 +1,161 @@
+"""運転台・計器・ランプ・画面（タイトル/メニュー）・サウンドのスプライト。"""
+import assets
+from routes_data import CARS
+from sb3 import *
+
+
+def _svg_to_stage(x, y):
+    return x - 240, 180 - y
+
+
+def _hud_sprite(p, name, overview):
+    s = p.sprite(name)
+    s.overview = overview
+    s.script(when_recv('運転画面を隠す'), [hide()], comment='タイトルや結果の画面では隠す')
+    return s
+
+
+def build_hud(p):
+    # 運転台
+    s = _hud_sprite(p, '運転台', '【運転台スプライト】運転席から見た窓枠と計器盤の絵。ペンの絵より手前に出る。\n'
+                               '車両名と同じ名前のコスチュームが使われる。新しい車両を足したら、ここにその車両名の\n'
+                               'コスチュームを足す（無いときは「T25000系」の絵のまま）。')
+    for c in CARS:
+        s.costume_svg(c['name'], assets.cab(c['name']), 240, 180)
+    s.script(when_recv('運転画面を表示'), [
+        costume(CARS[0]['name']),
+        costume(V('車両名')).c('車両名と同じ名前のコスチュームにする'),
+        goto(0, 0), show(),
+    ], comment='運転が始まったら表示')
+
+    # 速度計の針
+    sx, sy = _svg_to_stage(*assets.SPEEDO[:2])
+    s = _hud_sprite(p, '速度計の針', '【速度計の針】速度（km/h）に合わせて針を回す。0km/h が左下（−125°）、160km/h が右下（＋125°）。')
+    s.costume_svg('針', *assets.needle('#ff3b30', 40))
+    s.script(when_recv('運転画面を表示'), [goto(sx, sy), show()], comment='計器盤の速度計の中心に置く')
+    s.script(when_recv('表示'), [point(-assets.GAUGE_SWEEP + 2 * assets.GAUGE_SWEEP * V('速度') / 160).c('速度 0〜160 を −125°〜125° にする')],
+             comment='毎フレーム')
+
+    # BC 圧力計の針
+    bx, by = _svg_to_stage(*assets.BCGAUGE[:2])
+    s = _hud_sprite(p, 'BC圧計の針', '【BC圧計の針】ブレーキシリンダーの圧力（kPa）を示す。ブレーキの効き具合が目で見える。')
+    s.costume_svg('針', *assets.needle('#ffe14d', 38))
+    s.script(when_recv('運転画面を表示'), [goto(bx, by), show()], comment='計器盤の BC 圧力計の中心に置く')
+    s.script(when_recv('表示'), [point(-assets.GAUGE_SWEEP + 2 * assets.GAUGE_SWEEP * V('BC圧') / 600)],
+             comment='0〜600kPa を −125°〜125° にする')
+
+    # ノッチ表示
+    s = _hud_sprite(p, 'ノッチ表示', '【ノッチ表示】今のノッチ（P5〜N〜B8・EB）を表示する。コスチューム名がノッチ名。')
+    for n in assets.NOTCHES:
+        s.costume_svg(n, *assets.notch_costume(n))
+    nx, ny = _svg_to_stage(134, 304)
+    s.script(when_recv('運転画面を表示'), [goto(nx, ny), show()], comment='計器盤のノッチ表示の枠に置く')
+    s.script(when_recv('表示'), [costume(V('ノッチ名'))], comment='ノッチ名と同じ名前のコスチュームにする')
+
+    # 速度の数字（クローン 3 つ）
+    s = _hud_sprite(p, '速度の数字', '【速度の数字】速度計の下のデジタル表示。百の位・十の位・一の位の 3 つのクローンで表示する。\n'
+                                  '「桁」が 1=百の位、2=十の位、3=一の位。本体（桁 0）は表示しない。')
+    for d in list('0123456789') + ['空白']:
+        s.costume_svg(f'数字{d}', *assets.digit(d))
+    s.var('桁', 0)
+    s.var('_v', 0)
+    dx, dy = _svg_to_stage(assets.SPEEDO[0], assets.SPEEDO[1] + 32)
+    s.script(when_recv('運転画面を表示'), [
+        if_(eq(V('桁'), 0), [
+            set_('桁', 1), goto(dx - 13, dy), clone_myself(),
+            set_('桁', 2), goto(dx, dy), clone_myself(),
+            set_('桁', 3), goto(dx + 13, dy), clone_myself(),
+            set_('桁', 0),
+        ]),
+    ], comment='本体が 3 つのクローンを作る（クローンは桁と位置を受け継ぐ）')
+    s.script(when_clone(), [show()], comment='クローンだけ表示する')
+    s.script(when_recv('運転画面を隠す'), [if_(V('桁') > 0, [delete_clone()])], comment='クローンを消す')
+    s.script(when_recv('表示'), [
+        if_(V('桁') > 0, [
+            set_('_v', round_(V('速度'))),
+            if_else(and_(V('桁') < 3, V('_v') < mathop('10 ^', 3 - V('桁'))), [costume('数字空白')], [
+                costume(join('数字', floor(V('_v') / mathop('10 ^', 3 - V('桁'))) % 10)),
+            ]).c('上の桁の 0 は表示しない（例: 045 → 45）'),
+        ]),
+    ], comment='自分の桁の数字のコスチュームにする')
+
+    # ランプ
+    for name, label, lit_col, cond, pos, desc in [
+        ('ATS表示灯', 'ATS', '#ff2a2a', V('ATS状態') > 0, (42, 12), 'ATS が警報または非常ブレーキのときに赤く光る'),
+        ('戸閉表示灯', '戸閉', '#ffb020', eq(V('ドア'), '閉'), (82, 12), 'ドアが全部閉まっているときに光る（発車してよい合図）'),
+    ]:
+        s = _hud_sprite(p, name, f'【{name}】{desc}')
+        s.costume_svg('消灯', *assets.lamp(label, False, lit_col))
+        s.costume_svg('点灯', *assets.lamp(label, True, lit_col))
+        lx, ly = _svg_to_stage(*pos)
+        s.script(when_recv('運転画面を表示'), [goto(lx, ly), show()], comment='運転台の上の枠に置く')
+        s.script(when_recv('表示'), [if_else(cond, [costume('点灯')], [costume('消灯')])], comment='毎フレーム')
+
+    # 画面（タイトル・メニュー・結果のパネル）
+    s = p.sprite('画面')
+    s.overview = ('【画面スプライト】タイトル・路線選択・車両選択・結果のパネルを出す。いちばん手前に表示される。\n'
+                  'メニューの中身はリスト「路線一覧」「車両一覧」、結果はリスト「成績」と変数「総合評価」の表示。')
+    s.costume_svg('タイトル', assets.title_screen(), 240, 180)
+    s.costume_svg('路線パネル', assets.panel('路線をえらぶ', '数字キーで路線を選んでください'), 240, 180)
+    s.costume_svg('車両パネル', assets.panel('車両をえらぶ', '数字キーで車両を選んでください'), 240, 180)
+    s.costume_svg('結果パネル', assets.panel('運転成績', 'スペースキーでタイトルにもどる'), 240, 180)
+    for msg, cos in [('タイトルを表示', 'タイトル'), ('路線メニューを表示', '路線パネル'), ('車両メニューを表示', '車両パネル'),
+                     ('結果を表示', '結果パネル')]:
+        s.script(when_recv(msg), [costume(cos), goto(0, 0), show()], comment=f'「{cos}」を出す')
+    s.script(when_recv('画面を消す'), [hide()], comment='運転中は隠す')
+
+
+def build_sound(p):
+    s = p.sprite('サウンド')
+    s.costume_svg('サウンド', *assets.icon('音', '#e04080'))
+    s.overview = ('【サウンドスプライト】効果音を鳴らす。音はすべてプログラムで作ったオリジナル。\n'
+                  'モーター音・走行音・ジョイント音は、音の高さと大きさを別々に変えるためにクローンで鳴らしている\n'
+                  '（「役割」が 本体 / モーター / 走行音 / ジョイント）。\n'
+                  '■ 音を差し替えたいときは、同じ名前の音を録音・読み込みして置き換えてください。')
+    for name, fn in assets.SOUNDS.items():
+        s.sound_wav(name, *fn())
+    s.var('役割', '本体')
+    s.var('_音量', 0)
+    s.script(when_flag(), [set_('役割', '本体'), hide()], comment='緑の旗で本体に戻す')
+    s.script(when_recv('運転の準備'), [
+        if_(eq(V('役割'), '本体'), [
+            set_('役割', 'モーター'), clone_myself(),
+            set_('役割', '走行音'), clone_myself(),
+            set_('役割', 'ジョイント'), clone_myself(),
+            set_('役割', '本体'),
+        ]),
+    ], comment='クローンを 3 つ作る（クローンは「役割」を受け継ぐ）')
+    s.script(when_clone(), [
+        set_volume(0),
+        if_(eq(V('役割'), 'モーター'), [forever([play_wait('モーター')])]),
+        if_(eq(V('役割'), '走行音'), [forever([play_wait('走行音')])]),
+    ], comment='モーター音と走行音はずっと鳴らしておき、大きさと高さを毎フレーム変える')
+    s.script(when_recv('運転画面を隠す'), [if_(not_(eq(V('役割'), '本体')), [delete_clone()])], comment='クローンを消す')
+    s.script(when_recv('表示'), [
+        if_(eq(V('役割'), 'モーター'), [
+            set_('_音量', 0),
+            if_(V('速度') > 0.5, [
+                set_('_音量', 10 + V('力行率') * 70),
+                if_(V('速度') > 8, [change('_音量', V('ブレーキ率') * 30)]).c('電気ブレーキ（回生）のときもモーターがうなる'),
+            ]),
+            set_volume(V('_音量')),
+            sound_effect('PITCH', (V('速度') - 40) * 3.2).c('速いほど高い音（ピッチ 10 で半音上がる）'),
+        ]),
+        if_(eq(V('役割'), '走行音'), [
+            set_volume(V('速度') * 0.8),
+            sound_effect('PITCH', V('速度') * 1.2 - 50),
+        ]),
+    ], comment='毎フレーム、速度とノッチに合わせてモーター音と走行音を変える')
+    s.script(when_recv('ジョイント'), [
+        if_(and_(eq(V('役割'), 'ジョイント'), V('速度') > 3), [
+            set_volume(25 + V('速度') * 0.5),
+            play('ジョイント'),
+        ]),
+    ], comment='レールのつなぎ目の「タタン」')
+    s.script(when_recv('ATSベル'), [
+        if_(eq(V('役割'), '本体'), [repeat_until(eq(V('ATS状態'), 0), [play_wait('ATSベル')])]),
+    ], comment='ATS が元に戻るまでベルを鳴らし続ける')
+    for msg, snd in [('警笛', '警笛'), ('遠くの警笛', '遠くの警笛'), ('ドアチャイム', 'ドアチャイム'), ('発車メロディ', '発車メロディ'),
+                     ('すれ違い', 'すれ違い'), ('ブレーキ緩め', 'ブレーキ緩め'), ('ドア', 'ドア'), ('採点音', '採点'),
+                     ('ピタ停車音', 'ピタ停車'), ('結果音', '結果'), ('決定音', '決定')]:
+        s.script(when_recv(msg), [if_(eq(V('役割'), '本体'), [play(snd)])], comment=f'「{snd}」を鳴らす')

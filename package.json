@@ -1,0 +1,17 @@
+{
+  "name": "train-driver-3d-tools",
+  "private": true,
+  "description": "3D運転士ゲーム（Scratch）の検証・スクリーンショット用ツール。ゲーム本体は train-driver-3d.sb3",
+  "type": "module",
+  "scripts": {
+    "build": "python3 generator/build.py",
+    "verify": "node tools/verify_vm.mjs",
+    "screenshot": "node tools/screenshot.mjs"
+  },
+  "devDependencies": {
+    "@turbowarp/packager": "3.14.0",
+    "playwright": "^1.65.1",
+    "scratch-storage": "4.1.27",
+    "scratch-vm": "^5.0.300"
+  }
+}
