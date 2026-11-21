@@ -245,6 +245,8 @@
 
 `.sb3` は Python のジェネレータ（`generator/`）で作っています。Scratch 上で改造したものとは別に、ゲームを丸ごと作り直したいときに使います。
 
+品質ゲートは、再生成した `.sb3` の project.json と全アセットがコミット済みの内容と一致すること、および乱数と時計を固定した自動運転で3路線が結果画面に到達することを確かめます。
+
 ```bash
 python3 generator/build.py          # train-driver-3d.sb3 を作る（Python 3 と numpy）
 python3 generator/timetable.py      # 時刻表と所要時間の目安を表示
