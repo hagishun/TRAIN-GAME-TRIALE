@@ -183,6 +183,8 @@
 
 ## 改造ポイント
 
+**Scratch の画面でしくみを読む解説ページ: [docs/scratch-guide.md](docs/scratch-guide.md)**
+
 各スプライトの冒頭に「役割と改造ポイント」のコメント、主なブロックの右に説明のコメントがあります。
 
 ![路線データスプライト（駅を追加ブロックとコメント）](docs/screenshots/23-editor-route-stations.png)
