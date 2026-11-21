@@ -458,6 +458,102 @@ PLANE_NAMES = [f'飛行機_{a}_{v}' for a in AIRLINES for v in ('右', '左', '�
 PARKED_NAMES = [f'駐機_{a}' for a in AIRLINES]
 
 
+# ---------------------------------------------------------------------------
+# アクシデント（線路の障害物・踏切・信号機・雨）の絵。20px = 1m、回転中心は根元
+# ---------------------------------------------------------------------------
+def accident_costume(name):
+    if name == '倒木':
+        def f(w, h):
+            b = f'<ellipse cx="{w * .2}" cy="{h * .35}" rx="{w * .2}" ry="{h * .35}" fill="#3d6b35"/>'
+            b += f'<ellipse cx="{w * .1}" cy="{h * .55}" rx="{w * .12}" ry="{h * .3}" fill="#4f7f3f"/>'
+            b += f'<ellipse cx="{w * .3}" cy="{h * .6}" rx="{w * .14}" ry="{h * .28}" fill="#2f5a34"/>'
+            b += poly([(w * .22, h * .55), (w * .98, h * .62), (w * .98, h * .95), (w * .22, h * .9)], '#6b4a30')
+            for x in (.35, .5, .65, .8):
+                b += line(w * x, h * .62, w * x + 8, h * .9, '#4a3220', 2)
+            b += f'<ellipse cx="{w * .98}" cy="{h * .785}" rx="6" ry="{h * .17}" fill="#c9a26b" stroke="#6b4a30" stroke-width="2"/>'
+            return b
+        return world(name, 7, 1.8, f)
+    if name == '落石':
+        def f(w, h):
+            b = ''
+            for pts, col in [([(0, h), (8, h * .45), (30, h * .2), (52, h * .5), (58, h)], '#7d7a73'),
+                             ([(40, h), (55, h * .3), (78, 0), (100, h * .35), (108, h)], '#8f8b83'),
+                             ([(85, h), (95, h * .55), (115, h * .4), (128, h * .7), (134, h)], '#6d6a64'),
+                             ([(20, h), (30, h * .7), (45, h * .65), (50, h)], '#5f5c57')]:
+                b += poly(pts, col, 'stroke="#4a4844" stroke-width="1.5"')
+            return b
+        return world(name, 6.8, 2.0, f)
+    if name in ('動物', '動物_跳ぶ'):
+        def f(w, h):
+            fur, dark = '#9a6a3c', '#5a3a1e'
+            if name == '動物':
+                b = rect(w * .3, h * .55, w * .1, h * .45, fur) + rect(w * .6, h * .55, w * .1, h * .45, fur)
+                b += f'<ellipse cx="{w / 2}" cy="{h * .5}" rx="{w * .3}" ry="{h * .14}" fill="{fur}"/>'
+                b += rect(w * .42, h * .2, w * .16, h * .3, fur, rx=4)
+                b += f'<ellipse cx="{w / 2}" cy="{h * .2}" rx="{w * .14}" ry="{h * .09}" fill="{fur}"/>'
+                b += circle(w * .44, h * .19, 2, '#111') + circle(w * .56, h * .19, 2, '#111') + circle(w / 2, h * .26, 2.5, '#222')
+                b += f'<ellipse cx="{w * .3}" cy="{h * .14}" rx="{w * .09}" ry="{h * .04}" fill="{fur}"/>'
+                b += f'<ellipse cx="{w * .7}" cy="{h * .14}" rx="{w * .09}" ry="{h * .04}" fill="{fur}"/>'
+                for sx in (-1, 1):
+                    x0 = w / 2 + sx * w * .1
+                    b += line(x0, h * .11, x0 + sx * w * .14, 2, dark, 2.5) + line(x0 + sx * w * .07, h * .06, x0 + sx * w * .02, 2, dark, 2)
+            else:
+                b = line(w * .25, h * .6, w * .05, h * .95, fur, 4) + line(w * .3, h * .6, w * .18, h, fur, 4)
+                b += line(w * .7, h * .6, w * .9, h * .9, fur, 4) + line(w * .66, h * .62, w * .95, h * .75, fur, 4)
+                b += f'<ellipse cx="{w / 2}" cy="{h * .55}" rx="{w * .3}" ry="{h * .14}" fill="{fur}" transform="rotate(-12 {w / 2} {h * .55})"/>'
+                b += poly([(w * .72, h * .45), (w * .8, h * .2), (w * .9, h * .22), (w * .82, h * .5)], fur)
+                b += f'<ellipse cx="{w * .9}" cy="{h * .22}" rx="{w * .08}" ry="{h * .06}" fill="{fur}"/>'
+                b += line(w * .84, h * .16, w * .78, h * .02, dark, 2.5) + line(w * .86, h * .15, w * .95, h * .02, dark, 2)
+                b += circle(w * .2, h * .5, 5, '#f4efe6')
+            return b
+        return world(name, 1.6 if name == '動物' else 2.4, 1.8, f)
+    if name in ('車', '車_逃げる'):
+        def f(w, h):
+            b = rect(w * .05, h * .4, w * .9, h * .42, '#d23a2a', rx=6)
+            b += poly([(w * .22, h * .42), (w * .32, h * .08), (w * .7, h * .08), (w * .8, h * .42)], '#d23a2a')
+            b += poly([(w * .27, h * .4), (w * .35, h * .14), (w * .49, h * .14), (w * .49, h * .4)], '#2a3a4a')
+            b += poly([(w * .52, h * .4), (w * .52, h * .14), (w * .67, h * .14), (w * .75, h * .4)], '#2a3a4a')
+            b += circle(w * .25, h * .82, h * .17, '#222') + circle(w * .75, h * .82, h * .17, '#222')
+            b += circle(w * .25, h * .82, h * .07, '#aaa') + circle(w * .75, h * .82, h * .07, '#aaa')
+            b += rect(w * .9, h * .48, w * .06, h * .1, '#fff3b0')
+            return b
+        return world(name, 4.2, 1.6, f)
+    if name in ('踏切_点灯', '踏切_消灯'):
+        def f(w, h):
+            on = name.endswith('点灯')
+            b = rect(w / 2 - 3, h * .2, 6, h * .8, '#e8e8e8') + rect(w / 2 - 3, h * .5, 6, h * .1, '#222')
+            for ang in (35, -35):
+                b += (f'<rect x="{w / 2 - 22}" y="{h * .08}" width="44" height="7" fill="#f2d21a" stroke="#222" '
+                      f'stroke-width="1.5" transform="rotate({ang} {w / 2} {h * .08 + 3.5})"/>')
+            b += rect(w / 2 - 20, h * .2, 40, 14, '#222', rx=7)
+            b += circle(w / 2 - 11, h * .2 + 7, 6, '#ff2a1a' if on else '#5a1a14')
+            b += circle(w / 2 + 11, h * .2 + 7, 6, '#5a1a14' if on else '#ff2a1a')
+            if on:
+                b += circle(w / 2 - 11, h * .2 + 7, 12, '#ff5a3a', 'opacity="0.35"')
+            b += rect(w / 2 + 3, h * .62, w / 2 - 3, 5, '#f2d21a') + rect(w / 2 + 12, h * .62, 8, 5, '#222')
+            b += rect(w / 2 + 28, h * .62, 8, 5, '#222')
+            return b
+        return world(name, 2.4, 3.6, f)
+    if name.startswith('信号_'):
+        lit = name[3:]
+        def f(w, h):
+            b = rect(w / 2 - 3, h * .3, 6, h * .7, '#7a7d80')
+            b += rect(w / 2 - 14, 2, 28, h * .32, '#1b1d20', rx=6)
+            for i, (col, key) in enumerate([('#2fd06a', '青'), ('#ffb020', '注意'), ('#ff2a1a', '赤')]):
+                cy = 12 + i * 22
+                b += circle(w / 2, cy, 8, col if key == lit else '#2a2c30')
+                if key == lit:
+                    b += circle(w / 2, cy, 15, col, 'opacity="0.3"')
+            return b
+        return world(name, 1.6, 4.2, f)
+    if name == '雨の幕':
+        return svg(480, 260, rect(0, 0, 480, 260, '#4a5560')), 240, 130
+    raise KeyError(name)
+
+
+ACCIDENT_COSTUMES = ['倒木', '落石', '動物', '動物_跳ぶ', '車', '踏切_点灯', '踏切_消灯', '信号_赤', '信号_注意', '信号_青', '雨の幕']
+
+
 def airport_costume(name):
     if name.startswith('飛行機_'):
         _, airline, view = name.split('_')
@@ -567,7 +663,7 @@ def cab(name, body_col='#2f3a4a', face_col='#232a35'):
                                                                          '#2a2f37')
     b += poly([(24, 24), (30, 24), (25, 246), (21, 246)], '#14171c') + poly([(456, 24), (450, 24), (455, 246),
                                                                             (459, 246)], '#14171c')
-    b += text(172, 16, name, 10, '#c9d3df', extra='letter-spacing="2"')
+    b += text(196, 16, name, 10, '#c9d3df', extra='letter-spacing="2"')
     # ワイパー
     b += line(70, 242, 200, 232, '#15181c', 3) + line(70, 242, 76, 250, '#15181c', 5)
     # 計器盤
@@ -965,6 +1061,46 @@ def snd_squeal():
     return _wav((x * 0.32 + hiss * 0.12) * 0.8)
 
 
+def snd_alarm():
+    """防護無線・異常を知らせる警報（ピーポーピーポー）。"""
+    out = np.zeros(int(RATE * 2.2))
+    for k in range(4):
+        for j, f in enumerate((960, 770)):
+            t = _t(0.26)
+            tone = np.sign(np.sin(2 * np.pi * f * t)) * 0.5 + np.sin(2 * np.pi * f * t) * 0.5
+            _place(out, tone * _env(len(t), 0.01, 0.03) * 0.3, k * 0.55 + j * 0.27)
+    return _wav(out)
+
+
+def snd_buzzer():
+    """非常通報のブザー（ブーッ、ブーッ）。"""
+    out = np.zeros(int(RATE * 2.0))
+    for k in range(3):
+        t = _t(0.45)
+        x = np.sign(np.sin(2 * np.pi * 440 * t)) * 0.6 + np.sign(np.sin(2 * np.pi * 660 * t)) * 0.3
+        _place(out, _lowpass(x, 3000) * _env(len(t), 0.01, 0.05) * 0.35, k * 0.62)
+    return _wav(out)
+
+
+def snd_thump():
+    """障害物に当たったときの「ドン」（低い音だけ。こわくない音）。"""
+    t = _t(0.7)
+    x = np.sin(2 * np.pi * 70 * t) * np.exp(-9 * t) + 0.5 * np.sin(2 * np.pi * 110 * t) * np.exp(-14 * t)
+    x += _lowpass(_noise(len(t), 51), 900) * np.exp(-18 * t) * 0.8
+    return _wav(x * 0.7)
+
+
+def snd_rain():
+    """大雨の「ザーッ」という音（2 秒で切れ目なくくり返せる）。"""
+    n = int(RATE * 2.0)
+    x = _noise(n + 4000, 61)
+    x = _lowpass(x, 5000) - _lowpass(x, 600)
+    fade = 4000
+    y = x[:n].copy()
+    y[:fade] = y[:fade] * np.linspace(0, 1, fade) + x[n:n + fade] * np.linspace(1, 0, fade)
+    return _wav(y * 0.4)
+
+
 def snd_jet():
     """遠くを通る旅客機の「ゴォー」という音（低いうなりと、高いキーンという音が少し下がる）。"""
     dur = 5.0
@@ -986,7 +1122,8 @@ def snd_select():
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
 _PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8, '飛行機': 0.7, 'きしみ': 0.6}
+         '結果': 0.9, '決定': 0.8, '飛行機': 0.7, 'きしみ': 0.6, '防護無線': 0.8, '非常通報': 0.8, 'ドン': 0.9,
+         '雨': 0.5}
 
 
 def _normalized(name, fn):
@@ -1015,15 +1152,20 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '決定': snd_select,
     '飛行機': snd_jet,
     'きしみ': snd_squeal,
+    '防護無線': snd_alarm,
+    '非常通報': snd_buzzer,
+    'ドン': snd_thump,
+    '雨': snd_rain,
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
 SOUND_SPRITES = {
     '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
-            '結果', '決定', '飛行機'],
+            '結果', '決定', '飛行機', '防護無線', '非常通報', 'ドン'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
     'きしみ音': ['きしみ'],
+    '雨の音': ['雨'],
 }
 
 

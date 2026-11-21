@@ -50,11 +50,11 @@ await page.waitForFunction(() => window.scaffolding && scaffolding.vm.runtime.ta
 await page.evaluate(() => {
     const vm = scaffolding.vm;
     const st = vm.runtime.getTargetForStage();
-    const v = n => Object.values(st.variables).find(x => x.name === n);
+    const v = n => Object.values(st.variables).find(x => x.name === n && x.type !== 'broadcast_msg');
     window.T = {
         get: n => v(n).value,
         set: (n, x) => { v(n).value = x; },
-        local: (s, n) => Object.values(vm.runtime.targets.find(t => t.isOriginal && t.getName() === s).variables).find(x => x.name === n),
+        local: (s, n) => Object.values(vm.runtime.targets.find(t => t.isOriginal && t.getName() === s).variables).find(x => x.name === n && x.type !== 'broadcast_msg'),
         costume: s => { const t = vm.runtime.targets.find(x => x.isOriginal && x.getName() === s); return t.visible ? t.getCostumes()[t.currentCostume].name : '(隠れている)'; },
         keys: 0,
         broadcasts: {},
@@ -132,6 +132,7 @@ while (Date.now() - t0 < 300000) {
     const snap = await page.evaluate(() => ({
         場面: T.get('場面'), 速度: T.get('速度'), 位置: T.get('位置'), 現在の制限: T.get('現在の制限'), 次の駅番号: T.get('次の駅番号'),
         ノッチ: T.get('ノッチ'), 制限の開始: T.get('制限の開始').slice(), 制限の速度: T.get('制限の速度').slice(), 成績: T.get('成績').length,
+        止まる位置: T.get('止まる位置'), アクシデントの段階: T.get('アクシデントの段階'), 非常停止中: T.get('非常停止中'),
     }));
     if (snap.場面 !== '運転中') break;
     maxSpeed = Math.max(maxSpeed, Number(snap.速度));

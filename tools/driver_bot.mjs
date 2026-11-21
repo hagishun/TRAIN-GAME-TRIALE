@@ -2,7 +2,8 @@
 // 人間の運転士のように、制限速度と停止位置に向けてノッチを選ぶ。
 //   h: {num(名前), get(名前)} … ゲームの変数・リストを読む関数
 //   desiredNotch(h, state) → 目標のノッチ（5〜1 力行、0 N、−1〜−8 ブレーキ）
-export function makeBot({style = 'expert', seed = 7, reckless = false} = {}) {
+//   ignoreAccidents: アクシデントの知らせを無視する（ぶつかる・止まれないときの動きを確かめる）
+export function makeBot({style = 'expert', seed = 7, reckless = false, ignoreAccidents = false} = {}) {
     // 運転のくせ（停止位置の狙いのずれ・止まる直前にブレーキを緩めるか・制限への余裕・ノッチ操作の間隔）
     const STYLE = {
         expert: {aim: [0, 0], ease: 0.9, margin: -1.5, plan: 3.4, every: 1},
@@ -18,6 +19,9 @@ export function makeBot({style = 'expert', seed = 7, reckless = false} = {}) {
     };
 
     function desiredNotch(h, state) {
+        // アクシデント: 非常停止中・止まって待っているあいだはブレーキをかけたまま
+        const accStage = h.get('アクシデントの段階') || '';
+        if (Number(h.get('非常停止中') || 0) === 1 || accStage === '待つ' || accStage === '非常停止') return ignoreAccidents ? 0 : -8;
         const v = h.num('速度');
         const pos = h.num('位置');
         const lim = h.num('現在の制限');
@@ -28,8 +32,11 @@ export function makeBot({style = 'expert', seed = 7, reckless = false} = {}) {
             state.creep = false;
             state.offset = STYLE.aim[0] + (STYLE.aim[1] - STYLE.aim[0]) * rand();
         }
-        const dReal = stop - pos;
-        const d = dReal + state.offset;
+        // アクシデントで止まらないといけない位置（障害物・赤信号の手前、非常通報）が駅より手前なら、そこを目標にする
+        const accStop = Number(h.get('止まる位置') || 0);
+        const acc = !reckless && !ignoreAccidents && accStop > pos && accStop < stop;
+        const dReal = acc ? accStop - 6 - pos : stop - pos;
+        const d = acc ? dReal : dReal + state.offset;
         state.dReal = dReal;
         state.tolerance = h.num('停止位置の許容');
         const per = h.num('常用最大減速度') / 8;

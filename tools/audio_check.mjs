@@ -66,7 +66,7 @@ await page.evaluate(() => {
         if (t.sprite) for (const s of t.sprite.sounds) names[s.soundId] = s.name;
     }
     const stage = vm.runtime.getTargetForStage();
-    const sv = n => Object.values(stage.variables).find(x => x.name === n).value;
+    const sv = n => Object.values(stage.variables).find(x => x.name === n && x.type !== 'broadcast_msg').value;
     const hookBank = bank => {
         if (bank.__hooked) return;
         bank.__hooked = true;
@@ -86,7 +86,7 @@ await page.evaluate(() => {
     for (const t of vm.runtime.targets) if (t.sprite && t.sprite.soundBank) hookBank(t.sprite.soundBank);
     window.A.T = {
         get: sv,
-        set: (n, v) => { Object.values(stage.variables).find(x => x.name === n).value = v; },
+        set: (n, v) => { Object.values(stage.variables).find(x => x.name === n && x.type !== 'broadcast_msg').value = v; },
         targets: () => vm.runtime.targets.filter(t => t.sprite && ['効果音', '発車メロディ', 'モーター音', '走行音', 'きしみ音'].includes(t.sprite.name))
             .map(t => ({sprite: t.sprite.name, volume: Math.round(t.volume), pitch: t.soundEffects ? Math.round(t.soundEffects.pitch) : null})),
     };
@@ -117,7 +117,7 @@ await page.waitForTimeout(1500);
 // 対向列車を出してすれ違いの音
 await page.evaluate(() => {
     const t = scaffolding.vm.runtime.targets.find(x => x.isOriginal && x.sprite.name === '対向列車');
-    const v = n => Object.values(t.variables).find(x => x.name === n);
+    const v = n => Object.values(t.variables).find(x => x.name === n && x.type !== 'broadcast_msg');
     A.T.set('対向列車_出現率', 100);
     v('有無').value = 0;
     v('抽選タイマー').value = 999;

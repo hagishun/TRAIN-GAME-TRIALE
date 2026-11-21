@@ -35,13 +35,13 @@ async function pack(compiler) {
 const PAGE_HELPERS = () => {
     const vm = window.scaffolding.vm;
     const stage = vm.runtime.getTargetForStage();
-    const v = n => Object.values(stage.variables).find(x => x.name === n);
+    const v = n => Object.values(stage.variables).find(x => x.name === n && x.type !== 'broadcast_msg');
     window.T = {
         vm,
         get: n => v(n).value,
         set: (n, val) => { v(n).value = val; },
         sprite: n => vm.runtime.targets.find(t => t.isOriginal && t.getName() === n),
-        local: (s, n) => Object.values(window.T.sprite(s).variables).find(x => x.name === n),
+        local: (s, n) => Object.values(window.T.sprite(s).variables).find(x => x.name === n && x.type !== 'broadcast_msg'),
         key: (k, down) => vm.postIOData('keyboard', {key: k, isDown: down}),
         steps: 0,
         stepMs: 0,

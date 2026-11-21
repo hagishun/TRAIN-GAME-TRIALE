@@ -7,6 +7,9 @@
 //   node tools/verify_vm.mjs --style careful       # 運転のうまさ: expert（上手）/ careful（丁寧）/ sloppy（雑）
 //   node tools/verify_vm.mjs --input tap           # キーを使わず、画面のボタン（タッチボタン）を押したことにして走る
 //                                                  #（scratch-vm には描画がないので、ボタンのスクリプトと同じ変数を書きかえる）
+//   node tools/verify_vm.mjs --acc-rate 100        # アクシデントの起きやすさを変える（0 で起きない。ふだんは設定のまま 50）
+//   node tools/verify_vm.mjs --route 2 --acc 倒木:4000,大雨:9000   # 起きるアクシデントと場所を決めて走る
+//   node tools/verify_vm.mjs --route 2 --acc 倒木:4000 --ignore-acc  # 知らせを無視して走り、ぶつかったときを確かめる
 //
 // 時計（Date.now）を偽物にして 1 フレーム = 1/30 秒ずつ進めるので、実時間より速く検証できる。
 import fs from 'fs';
@@ -28,7 +31,9 @@ const quiet = args.includes('--quiet');
 const trace = args.includes('--trace');
 const style = opt('--style', 'expert');
 const tapInput = opt('--input', 'key') === 'tap';
-const bot = makeBot({style, seed: Number(opt('--seed', 7)), reckless});
+const accRate = opt('--acc-rate', null);
+const accPlan = opt('--acc', null);
+const bot = makeBot({style, seed: Number(opt('--seed', 7)), reckless, ignoreAccidents: args.includes('--ignore-acc')});
 const STYLE = bot.STYLE;
 
 // ---- 偽の時計 --------------------------------------------------------------
@@ -76,7 +81,7 @@ async function newVM() {
 function helpers(vm) {
     const stage = vm.runtime.getTargetForStage();
     const byName = {};
-    for (const v of Object.values(stage.variables)) byName[v.name] = v;
+    for (const v of Object.values(stage.variables)) if (v.type !== 'broadcast_msg') byName[v.name] = v;  // 同じ名前のメッセージは除く
     const get = n => {
         const v = byName[n];
         if (!v) throw new Error('no var ' + n);
@@ -131,6 +136,7 @@ async function runRoute(routeNo) {
     vm.greenFlag();
     step(vm, 20);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
+    if (accRate !== null) h.set('アクシデント_起きやすさ', Number(accRate));
     if (h.get('場面') !== 'タイトル') throw new Error('タイトル画面にならない: ' + h.get('場面'));
     tap(vm, 'space', 3);
     step(vm, 5);
@@ -150,8 +156,24 @@ async function runRoute(routeNo) {
     step(vm, 30);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
     const routeName = h.get('路線名');
-    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, planes: 0};
+    if (accPlan !== null) {
+        // アクシデントの予定を書きかえる（種類:位置, ...）
+        const acc = h.sprite('アクシデント');
+        const lst = n => Object.values(acc.variables).find(v => v.name === n && v.type === 'list');
+        lst('予定の位置').value = [];
+        lst('予定の種類').value = [];
+        for (const item of accPlan.split(',').filter(Boolean)) {
+            const [kind, at] = item.split(':');
+            lst('予定の種類').value.push(kind);
+            lst('予定の位置').value.push(Number(at));
+        }
+    }
+    const accLocal = n => Object.values(h.sprite('アクシデント').variables).find(v => v.name === n && v.type === 'list').value;
+    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, planes: 0,
+        accidents: [], accidentLines: []};
     let planesWas = 0;
+    let accWas = '', accStageWas = '';
+    log.events.push(`アクシデントの予定: ${accLocal('予定の種類').map((k, i) => `${k}@${Math.round(accLocal('予定の位置')[i])}m`).join('、') || 'なし'}`);
     let lastScene = '';
     let lastATS = 0;
     let oppWas = 0;
@@ -206,6 +228,17 @@ async function runRoute(routeNo) {
             }
             oppWas = opp;
         }
+        const accNow = h.get('アクシデント'), accStage = h.get('アクシデントの段階');
+        if (accNow !== accWas || accStage !== accStageWas) {
+            if (accNow && accNow !== accWas) log.accidents.push(accNow);
+            log.events.push(`[${(frame / 30).toFixed(1)}s] アクシデント=${accNow || '（なし）'} 段階=${accStage || '-'} 位置=${h.num('位置').toFixed(0)} 速度=${h.num('速度').toFixed(1)} 止まる位置=${Math.round(h.num('止まる位置'))} 案内=${h.get('案内')}`);
+            accWas = accNow;
+            accStageWas = accStage;
+        }
+        const saiten = h.get('採点');
+        if (saiten.length && saiten.some(l => String(l).startsWith('アクシデント')) && !log.accidentLines.includes(saiten[0] + saiten.find(l => String(l).startsWith('アクシデント')))) {
+            log.accidentLines.push(saiten[0] + saiten.find(l => String(l).startsWith('アクシデント')));
+        }
         const planes = h.get('飛行機の位置').length;
         if (planes > planesWas) {
             log.planes += planes - planesWas;
@@ -242,6 +275,7 @@ for (const r of routes) {
     origLog('  成績:');
     for (const line of log.results) origLog('    ' + line);
     origLog(`  総合評価: ${log.summary}`);
+    origLog(`  アクシデント: ${log.accidents.length ? log.accidents.join('・') : 'なし'}${log.accidentLines.length ? '  採点: ' + log.accidentLines.join(' / ') : ''}`);
     origLog(`  最後の場面=${log.scene}  ゲーム内 ${log.gameSeconds.toFixed(0)} 秒 / 実時間 ${log.realSeconds.toFixed(1)} 秒` +
         `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  飛行機 ${log.planes} 機  NaN ${log.nanFrames}`);
 }

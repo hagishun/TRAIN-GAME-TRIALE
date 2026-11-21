@@ -10,7 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from sb3 import Project  # noqa: E402
-from sprites import stage, data, logic, render, hud  # noqa: E402
+from sprites import stage, data, logic, render, hud, accident  # noqa: E402
 
 
 def build(path):
@@ -21,6 +21,7 @@ def build(path):
     render.build_render(p)
     render.build_opposing(p)
     render.build_planes(p)
+    accident.build_accident(p)
     data.build_settings(p)
     data.build_routes(p)
     data.build_cars(p)
