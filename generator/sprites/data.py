@@ -3,7 +3,7 @@ import assets
 from sb3 import *
 from routes_data import ROUTES, CARS, TRANSFER
 from timetable import timetable
-from sprites.stage import SETTINGS
+from sprites.stage import SETTING_GROUPS
 
 OPPOSING_COLORS = [('#d5dbe1', '#1e5aa8'), ('#e8e1cf', '#c8361f'), ('#cfd6dc', '#2f9a4a'), ('#3a4a5e', '#f39a1e'),
                    ('#e6e9ec', '#7a3fa0')]
@@ -16,14 +16,7 @@ def build_settings(p):
                   '緑の旗を押すと「設定を読み込む」が送られ、下のブロックが上から順に実行されます。\n'
                   '数字を書き換えるだけで、見え方・難しさ・対向列車の出やすさなどを変えられます。\n'
                   '各ブロックの右のコメントに意味と目安を書いてあります。')
-    groups = [
-        ('見え方（カメラと画面）', SETTINGS[0:5]),
-        ('描画の細かさ（重いときはここを軽く）', SETTINGS[5:11] + [SETTINGS[19]]),
-        ('線路・架線・ホームの寸法', SETTINGS[11:19]),
-        ('運転と採点のルール', SETTINGS[20:27]),
-        ('対向列車', SETTINGS[27:33]),
-        ('色（#赤緑青 の16進数で書く）', SETTINGS[33:]),
-    ]
+    groups = SETTING_GROUPS
     for title, items in groups:
         body = [set_(n, v).c(c) for n, v, c in items]
         if title == '対向列車':
@@ -93,13 +86,17 @@ def _route_proc(s, idx, r, car):
              r['colors']['右外側'], r['right_edge'], r['colors']['霧'])
         .c('線路から離れた所の色（道路・森・海など）と、線路の中心からの距離。霧の色も決める'),
     ]
-    for k, (name, pos, t) in enumerate(tt):
-        b = call('駅を追加 %s 停止位置 %s m 時刻 %s', name, pos, t)
+    for k, (name, pos, t, kind) in enumerate(tt):
+        b = call('駅を追加 %s 停止位置 %s m 時刻 %s %s', name, pos, t, kind)
         if k == 0:
             b.c('━━ 駅 ━━\n駅名を変えたいときは、ここの駅名を書き換えるだけでよい（表示・成績に使われる）。\n'
                 '停止位置は路線の始めからの距離 [m]。時刻は hh:mm:ss（2けた）で、\n'
                 '始発駅は発車時刻、2駅目からは到着時刻（定刻）。\n'
+                '最後の「停車」「通過」で、その駅に止まるか通過するかを決める（通過の駅は時刻を「通過」と書く）。\n'
+                '通過を停車に変えたら、時刻も書くこと（あとの駅の時刻も少し遅らせるとよい）。\n'
                 '駅名標の絵は「3D描画」スプライトの、駅名と同じ名前のコスチュームが使われる（無ければ無地）。')
+        elif kind == '通過' and tt[k - 1][3] == '停車':
+            b.c('通過駅（止まらずに通り過ぎる。速達運転）')
         elif name in TRANSFER:
             b.c(f'{name}: {TRANSFER[name]}（駅名標の下の帯に表示）')
         body.append(b)
@@ -123,9 +120,17 @@ def _route_proc(s, idx, r, car):
         body.append(blk)
     body.append(call('沿線物の間隔を %s m にする', r['scenery_interval'])
                 .c('━━ 沿線の景色 ━━\n木や建物を置く間隔。左右に置く物は下の「沿線物を追加」で決める'))
+    shop_noted = False
     for side in ('左', '右'):
         for name in r['scenery_left' if side == '左' else 'scenery_right']:
-            body.append(call('沿線物を追加 %s 側に %s', side, name))
+            blk = call('沿線物を追加 %s 側に %s', side, name)
+            if name.startswith('店_') and not shop_noted:
+                shop_noted = True
+                blk.c('━━ 沿線の店 ━━\n「店_」で始まる名前は、看板つきの店（景色スプライトのコスチューム）。\n'
+                      'ここを書き換えると、どの店が並ぶかが変わる（ほかの路線の店や、自分で描いた店も使える）。\n'
+                      '看板の店名そのものを変えるには、景色スプライトのコスチューム「店_○○」を開いて文字を書き換え、\n'
+                      'コスチューム名も「店_新しい店名」に変えてから、ここの名前も同じにする。')
+            body.append(blk)
     if not r['scenery_right']:
         body[-1].c('右側には何も置かない（海が見える）') if r['scenery_left'] else None
     s.proc(f'路線{idx} {r["name"]}', [], body,
@@ -140,6 +145,7 @@ def build_routes(p):
     s.overview = ('【路線データスプライト】3つの路線の駅・時刻表・制限速度・カーブ・坂・景色を決めています。\n'
                   '路線と駅は「信町高速鉄道 路線図」に合わせています。\n'
                   '■ 駅名を変える: 下の「路線1 信町本線」などの定義の中の「駅を追加」ブロックの駅名を書き換える。\n'
+                  '■ 止まる駅・通過する駅: 「駅を追加」の最後を「停車」か「通過」にする（信町本線は速達で 7 駅を通過）。\n'
                   '   （同じ駅が2つの路線にあるとき＝高田・信早ヶ丘は、両方の路線で書き換える）\n'
                   '■ 時刻表を変える: 「駅を追加」の時刻を書き換える（hh:mm:ss）。\n'
                   '■ 路線を増やす:\n'
@@ -172,7 +178,7 @@ def build_routes(p):
     s.proc('路線を始める 名前 %s 最高速度 %s km/h', ['名前', '最高速度'], [
         set_('路線名', A('名前')),
         set_('路線の最高速度', A('最高速度')),
-    ] + [delete_all(n) for n in ('駅名', '駅の位置', '駅の時刻', '制限の開始', '制限の終了', '制限の速度', 'カーブの開始',
+    ] + [delete_all(n) for n in ('駅名', '駅の位置', '駅の時刻', '駅の種別', '制限の開始', '制限の終了', '制限の速度', 'カーブの開始',
                                  'カーブの終了', 'カーブの曲率', '勾配の開始', '勾配の終了', '勾配の値', '沿線物_左', '沿線物_右')]
            + [set_('沿線物の間隔', 30)], comment='━━ ここから下は、上の路線のブロックで使う部品（ふつうは変えなくてよい）━━\n'
                                                    '路線のデータを空にして、名前と最高速度を決める')
@@ -187,9 +193,10 @@ def build_routes(p):
         set_('色_左外側', A('左の色')), set_('左外側の距離', A('左の距離')),
         set_('色_右外側', A('右の色')), set_('右外側の距離', A('右の距離')), set_('色_霧', A('霧の色')),
     ], comment='線路から離れた所の色と距離、霧の色')
-    s.proc('駅を追加 %s 停止位置 %s m 時刻 %s', ['駅名', '停止位置', '時刻'], [
+    s.proc('駅を追加 %s 停止位置 %s m 時刻 %s %s', ['駅名', '停止位置', '時刻', '停車か通過'], [
         add('駅名', A('駅名')), add('駅の位置', A('停止位置')), add('駅の時刻', A('時刻')),
-    ], comment='駅を1つ足す。上から順に、始発駅・2番目の駅…となる')
+        if_else(eq(A('停車か通過'), '通過'), [add('駅の種別', '通過')], [add('駅の種別', '停車')]),
+    ], comment='駅を1つ足す。上から順に、始発駅・2番目の駅…となる。「通過」と書いた駅には止まらない')
     s.proc('制限を追加 %s m から %s m まで %s km/h', ['始め', '終わり', '速度'], [
         add('制限の開始', A('始め')), add('制限の終了', A('終わり')), add('制限の速度', A('速度')),
     ], comment='速度制限の区間を1つ足す')
@@ -247,10 +254,12 @@ def build_routes(p):
         delete_all('駅の時刻秒'),
         set_('_i', 1),
         repeat(length('駅の時刻'), [
-            call('時刻を秒にする %s', item('駅の時刻', V('_i'))),
-            add('駅の時刻秒', V('秒')),
+            if_else(eq(item('駅の種別', V('_i')), '通過'), [add('駅の時刻秒', 0)], [
+                call('時刻を秒にする %s', item('駅の時刻', V('_i'))),
+                add('駅の時刻秒', V('秒')),
+            ]),
             change('_i', 1),
-        ]).c('時刻の文字（hh:mm:ss）を、計算しやすい秒に直しておく'),
+        ]).c('時刻の文字（hh:mm:ss）を、計算しやすい秒に直しておく（通過駅は 0）'),
     ], comment='カーブと坂のデータから、10m ごとの「曲率表」「勾配表」を作る。\n'
                '3D描画と運転は、この表を見るだけでその場所のカーブと坂がわかる')
     s.proc('時刻を秒にする %s', ['時刻'], [

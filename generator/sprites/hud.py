@@ -30,10 +30,11 @@ def build_hud(p):
 
     # 速度計の針
     sx, sy = _svg_to_stage(*assets.SPEEDO[:2])
-    s = _hud_sprite(p, '速度計の針', '【速度計の針】速度（km/h）に合わせて針を回す。0km/h が左下（−125°）、160km/h が右下（＋125°）。')
+    s = _hud_sprite(p, '速度計の針', f'【速度計の針】速度（km/h）に合わせて針を回す。0km/h が左下（−125°）、{assets.SPEEDO_MAX}km/h が右下（＋125°）。')
     s.costume_svg('針', *assets.needle('#ff3b30', 40))
     s.script(when_recv('運転画面を表示'), [goto(sx, sy), show()], comment='計器盤の速度計の中心に置く')
-    s.script(when_recv('表示'), [point(-assets.GAUGE_SWEEP + 2 * assets.GAUGE_SWEEP * V('速度') / 160).c('速度 0〜160 を −125°〜125° にする')],
+    s.script(when_recv('表示'), [point(-assets.GAUGE_SWEEP + 2 * assets.GAUGE_SWEEP * V('速度') / assets.SPEEDO_MAX)
+                                      .c(f'速度 0〜{assets.SPEEDO_MAX} を −125°〜125° にする')],
              comment='毎フレーム')
 
     # BC 圧力計の針
@@ -98,7 +99,7 @@ def build_hud(p):
     s.costume_svg('タイトル', assets.title_screen(), 240, 180)
     s.costume_svg('路線パネル', assets.panel('路線をえらぶ', '数字キーで路線を選んでください'), 240, 180)
     s.costume_svg('車両パネル', assets.panel('車両をえらぶ', '数字キーで車両を選んでください'), 240, 180)
-    s.costume_svg('結果パネル', assets.panel('運転成績', 'スペースキーでタイトルにもどる'), 240, 180)
+    s.costume_svg('結果パネル', assets.panel('運転成績', 'Enter キーかクリックでタイトルにもどる'), 240, 180)
     for msg, cos in [('タイトルを表示', 'タイトル'), ('路線メニューを表示', '路線パネル'), ('車両メニューを表示', '車両パネル'),
                      ('結果を表示', '結果パネル')]:
         s.script(when_recv(msg), [costume(cos), goto(0, 0), show()], comment=f'「{cos}」を出す')
@@ -106,56 +107,79 @@ def build_hud(p):
 
 
 def build_sound(p):
-    s = p.sprite('サウンド')
-    s.costume_svg('サウンド', *assets.icon('音', '#e04080'))
-    s.overview = ('【サウンドスプライト】効果音を鳴らす。音はすべてプログラムで作ったオリジナル。\n'
-                  'モーター音・走行音・ジョイント音は、音の高さと大きさを別々に変えるためにクローンで鳴らしている\n'
-                  '（「役割」が 本体 / モーター / 走行音 / ジョイント）。\n'
-                  '■ 音を差し替えたいときは、同じ名前の音を録音・読み込みして置き換えてください。')
-    for name, fn in assets.SOUNDS.items():
-        s.sound_wav(name, *fn())
-    s.var('役割', '本体')
-    s.var('_音量', 0)
-    s.script(when_flag(), [set_('役割', '本体'), hide()], comment='緑の旗で本体に戻す')
-    s.script(when_recv('運転の準備'), [
-        if_(eq(V('役割'), '本体'), [
-            set_('役割', 'モーター'), clone_myself(),
-            set_('役割', '走行音'), clone_myself(),
-            set_('役割', 'ジョイント'), clone_myself(),
-            set_('役割', '本体'),
-        ]),
-    ], comment='クローンを 3 つ作る（クローンは「役割」を受け継ぐ）')
-    s.script(when_clone(), [
-        set_volume(0),
-        if_(eq(V('役割'), 'モーター'), [forever([play_wait('モーター')])]),
-        if_(eq(V('役割'), '走行音'), [forever([play_wait('走行音')])]),
-    ], comment='モーター音と走行音はずっと鳴らしておき、大きさと高さを毎フレーム変える')
-    s.script(when_recv('運転画面を隠す'), [if_(not_(eq(V('役割'), '本体')), [delete_clone()])], comment='クローンを消す')
-    s.script(when_recv('表示'), [
-        if_(eq(V('役割'), 'モーター'), [
-            set_('_音量', 0),
-            if_(V('速度') > 0.5, [
-                set_('_音量', 10 + V('力行率') * 70),
-                if_(V('速度') > 8, [change('_音量', V('ブレーキ率') * 30)]).c('電気ブレーキ（回生）のときもモーターがうなる'),
-            ]),
-            set_volume(V('_音量')),
-            sound_effect('PITCH', (V('速度') - 40) * 3.2).c('速いほど高い音（ピッチ 10 で半音上がる）'),
-        ]),
-        if_(eq(V('役割'), '走行音'), [
-            set_volume(V('速度') * 0.8),
-            sound_effect('PITCH', V('速度') * 1.2 - 50),
-        ]),
-    ], comment='毎フレーム、速度とノッチに合わせてモーター音と走行音を変える')
-    s.script(when_recv('ジョイント'), [
-        if_(and_(eq(V('役割'), 'ジョイント'), V('速度') > 3), [
-            set_volume(25 + V('速度') * 0.5),
-            play('ジョイント'),
-        ]),
-    ], comment='レールのつなぎ目の「タタン」')
+    """音のスプライトを 3 つに分ける。Scratch の音量はスプライトごとなので、
+    モーター音・走行音の音量を変えても効果音（警笛・チャイムなど）の音量は変わらない。"""
+    def sounds_of(s, sprite_name):
+        for name in assets.SOUND_SPRITES[sprite_name]:
+            s.sound_wav(name, *assets.SOUNDS[name]())
+
+    # 効果音（音量は「設定」の効果音の音量だけで決まる）
+    s = p.sprite('効果音')
+    s.costume_svg('効果音', *assets.icon('音', '#e04080'))
+    sounds_of(s, '効果音')
+    s.overview = ('【効果音スプライト】警笛・ドアチャイム・発車メロディ・ATS ベルなどを鳴らす（音はすべて合成したオリジナル）。\n'
+                  '■ 音量は「設定」スプライトの「効果音の音量」で決まり、走っている間も変わらない。\n'
+                  '   （モーター音と走行音は別のスプライトなので、そちらの音量を変えても効果音には影響しない）\n'
+                  '■ 音を差し替えたいときは、同じ名前の音を録音・読み込みして置き換える。\n'
+                  '■ ブラウザは、ページを一度クリック（またはキーを押す）するまで音を出さない決まりがある。\n'
+                  '   Scratch ではクリックが必要なので、タイトル画面はクリックでも始められるようにしてある。')
+    s.script(when_flag(), [hide(), set_volume(100)], comment='緑の旗で音量を戻す')
     s.script(when_recv('ATSベル'), [
-        if_(eq(V('役割'), '本体'), [repeat_until(eq(V('ATS状態'), 0), [play_wait('ATSベル')])]),
+        set_volume(V('効果音の音量')),
+        repeat_until(eq(V('ATS状態'), 0), [play_wait('ATSベル')]),
     ], comment='ATS が元に戻るまでベルを鳴らし続ける')
     for msg, snd in [('警笛', '警笛'), ('遠くの警笛', '遠くの警笛'), ('ドアチャイム', 'ドアチャイム'), ('発車メロディ', '発車メロディ'),
                      ('すれ違い', 'すれ違い'), ('ブレーキ緩め', 'ブレーキ緩め'), ('ドア', 'ドア'), ('採点音', '採点'),
                      ('ピタ停車音', 'ピタ停車'), ('結果音', '結果'), ('決定音', '決定')]:
-        s.script(when_recv(msg), [if_(eq(V('役割'), '本体'), [play(snd)])], comment=f'「{snd}」を鳴らす')
+        s.script(when_recv(msg), [set_volume(V('効果音の音量')), play(snd)], comment=f'「{snd}」を鳴らす')
+
+    # モーター音（速度に合わせて高さ、ノッチに合わせて大きさが変わる）
+    s = p.sprite('モーター音')
+    s.costume_svg('モーター音', *assets.icon('モータ', '#c05020'))
+    sounds_of(s, 'モーター音')
+    s.overview = ('【モーター音スプライト】走っている間ずっとモーター音を鳴らし、毎フレーム高さと大きさを変える。\n'
+                  '■ 大きさの最大は「設定」の「モーター音の音量」。0 にするとモーター音が消える。\n'
+                  '■ 速いほど高い音（ピッチ 10 で半音上がる）。力行中と電気ブレーキ中は大きくなる。')
+    s.var('_音量', 0)
+    s.script(when_flag(), [hide(), set_volume(0)], comment='最初は音を出さない')
+    s.script(when_recv('運転画面を表示'), [
+        set_volume(0),
+        forever([play_wait('モーター')]).c('1 秒の音をくり返し鳴らす。大きさと高さは「表示」で変える'),
+    ], comment='運転が始まったら鳴らし始める。\n'
+               '（「運転の準備」は終わるまで待たれるメッセージなので、ずっと続くループは「運転画面を表示」で始める）')
+    s.script(when_recv('運転画面を隠す'), [set_volume(0), stop('other scripts in sprite')],
+             comment='運転が終わったら止める')
+    s.script(when_recv('表示'), [
+        set_('_音量', 0),
+        if_(V('速度') > 0.5, [
+            set_('_音量', 15 + V('力行率') * 85),
+            if_(V('速度') > 8, [change('_音量', V('ブレーキ率') * 45)]).c('電気ブレーキ（回生）のときもモーターがうなる'),
+            if_(V('_音量') > 100, [set_('_音量', 100)]),
+        ]),
+        set_volume(V('_音量') * V('モーター音の音量') / 100),
+        sound_effect('PITCH', (V('速度') - 120) * 1.4).c('速いほど高い音（ピッチは −360〜360 まで）'),
+    ], comment='毎フレーム、速度とノッチに合わせてモーター音を変える')
+
+    # 走行音（ゴーという音と、レールのつなぎ目の「タタン」）
+    s = p.sprite('走行音')
+    s.costume_svg('走行音', *assets.icon('走行', '#806040'))
+    sounds_of(s, '走行音')
+    s.overview = ('【走行音スプライト】走っている間の「ゴー」という音と、レールのつなぎ目の「タタン」を鳴らす。\n'
+                  '■ 大きさの最大は「設定」の「走行音の音量」。速いほど大きくなる。')
+    s.var('_音量', 0)
+    s.script(when_flag(), [hide(), set_volume(0)], comment='最初は音を出さない')
+    s.script(when_recv('運転画面を表示'), [
+        set_volume(0),
+        forever([play_wait('走行音')]),
+    ], comment='運転が始まったら鳴らし始める')
+    s.script(when_recv('運転画面を隠す'), [set_volume(0), stop('other scripts in sprite')],
+             comment='運転が終わったら止める')
+    s.script(when_recv('表示'), [
+        set_('_音量', 0),
+        if_(V('速度') > 1, [set_('_音量', 30 + V('速度') * 0.25)]),
+        if_(V('_音量') > 100, [set_('_音量', 100)]),
+        set_volume(V('_音量') * V('走行音の音量') / 100),
+        sound_effect('PITCH', V('速度') * 0.5 - 50),
+    ], comment='毎フレーム、速度に合わせて走行音を変える（止まっているときは無音）')
+    s.script(when_recv('ジョイント'), [if_(and_(V('速度') > 3, V('速度') < 160), [play('ジョイント')])],
+             comment='25m ごとに「タタン」（運転スプライトから届く）。高速の区間は長いレールなので 160km/h 以上では鳴らさない')

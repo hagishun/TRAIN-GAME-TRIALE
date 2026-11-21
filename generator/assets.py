@@ -180,7 +180,7 @@ def scenery(name):
         return world(name, 9, 7, f)
     if name.startswith('ビル'):
         spec = {'ビル1': (14, 28, '#6f8296', '#9fb6cc'), 'ビル2': (18, 20, '#cdbfa6', '#8d8170'),
-                'ビル3': (10, 40, '#3f4c63', '#6c7f9c'), 'ビル4': (22, 12, '#b9b2a8', '#7d756b')}[name]
+                'ビル3': (10, 40, '#3f4c63', '#6c7f9c')}[name]
         wm, hm, col, win = spec
         def f(w, h):
             b = rect(0, 0, w, h, col) + rect(0, 0, w, 6, '#00000033')
@@ -193,8 +193,6 @@ def scenery(name):
                     wy = h * (iy + 0.25) / (ny + 0.3)
                     b += rect(f'{wx:.0f}', f'{wy:.0f}', f'{w / nx * .6:.0f}', f'{h / ny * .45:.0f}',
                               '#ffd98a' if lit else win)
-            if name == 'ビル4':
-                b += rect(w * .1, h * .05, w * .8, h * .18, BLUE) + text(w / 2, h * .19, '信町ストア', h * .12, '#fff')
             return b
         return world(name, wm, hm, f)
     if name == '電柱':
@@ -220,12 +218,93 @@ def scenery(name):
             b += poly([(0, h * .24), (w / 2, h * .05), (w, h * .24)], s) + circle(w / 2, h * .04, w * .08, s)
             return b
         return world(name, 1.2, 2.6, f)
+    if name.startswith('店_'):
+        return shop(*next(sh for sh in SHOPS if sh[0] == name[2:]))
     raise KeyError(name)
 
 
-SCENERY_NAMES = ['松', '杉', '広葉樹', '紅葉', '家', 'ビル1', 'ビル2', 'ビル3', 'ビル4', '電柱', '鳥居', '灯籠']
+# 沿線の店（コスチューム名は「店_店名」）。看板の文字はコスチュームの中の文字なので、
+# Scratch のコスチュームエディタで書き換えられる。
+#   (店名, 建物の形, 壁の色, 看板の色, 看板の文字の色)
+#   形: 'low'=2階建ての店 / 'mid'=中くらいのビル（縦看板つき）/ 'roof'=屋上看板のビル / 'wa'=和風の店（のれん）
+SHOPS = [
+    # 信町本線（街なか）
+    ('信町ストア', 'low', '#b9b2a8', BLUE, '#ffffff'),
+    ('喫茶ひだまり', 'low', '#d9c6a5', '#6b3e26', '#ffe9c4'),
+    ('信町書店', 'mid', '#c4c9cf', '#2f6b3a', '#ffffff'),
+    ('みどり薬局', 'low', '#e8e6df', '#2aa05a', '#ffffff'),
+    ('ラーメン信町軒', 'low', '#cfc2b0', '#c8361f', '#fff3a0'),
+    ('信町銀行', 'mid', '#d6d2c8', '#1e3f7a', '#ffffff'),
+    ('ホテル信町', 'roof', '#b8c2cc', '#7a3fa0', '#ffffff'),
+    ('信町デンキ', 'roof', '#c9cdd2', '#f0c020', '#c8161f'),
+    ('寿司 信', 'wa', '#e4d8c0', '#2b2b2b', '#ffffff'),
+    ('花屋フローラ', 'low', '#efe3e8', '#e06a9a', '#ffffff'),
+    ('信町ベーカリー', 'low', '#ecd9b8', '#a0642a', '#fff5e0'),
+    ('信町歯科', 'mid', '#e6ebee', '#2a8fbf', '#ffffff'),
+    # 神社線（門前町）
+    ('門前そば', 'wa', '#d8c8a8', '#3a2a1a', '#ffffff'),
+    ('みやげ 神社堂', 'wa', '#e0d2b4', '#8a1f1a', '#ffe9b0'),
+    ('茶屋 杉の木', 'wa', '#cdbf9f', '#2e4a2b', '#f5ead0'),
+    ('旅館 信町荘', 'wa', '#d9ccb0', '#4a3424', '#ffffff'),
+    # 田原海岸線（海沿い）
+    ('海の家しおさい', 'low', '#f3ecd8', '#2e8fd0', '#ffffff'),
+    ('浜焼き 田原屋', 'wa', '#e6dcc6', '#d05a1e', '#ffffff'),
+    ('民宿なぎさ', 'low', '#eef2f2', '#1f7a8c', '#ffffff'),
+    ('釣具うみかぜ', 'low', '#e2e6e0', '#3a5a8a', '#ffe14d'),
+    ('田原みやげ', 'roof', '#d8dee2', '#e0782a', '#ffffff'),
+]
+SHOP_SIZE = {'low': (11, 8), 'mid': (13, 17), 'roof': (15, 21), 'wa': (10, 7)}
+
+
+def shop(name, style, wall, sign, ink):
+    """看板つきの店。看板の文字は店名。"""
+    wm, hm = SHOP_SIZE[style]
+    rnd = _random.Random(name)
+
+    def f(w, h):
+        n = len(name)
+        if style == 'wa':
+            b = rect(w * .04, h * .38, w * .92, h * .62, wall)
+            b += poly([(0, h * .42), (w * .1, h * .12), (w * .9, h * .12), (w, h * .42)], '#4a5560')
+            b += rect(w * .1, h * .02, w * .8, h * .12, sign, rx=2)
+            b += text(w / 2, h * .115, name, f'{min(h * .085, w * .72 / max(n, 1)):.1f}', ink)
+            for i in range(4):
+                b += rect(w * (.16 + i * .18), h * .62, w * .15, h * .16, sign, extra='opacity="0.9"')
+            b += rect(w * .12, h * .78, w * .76, h * .22, '#5a4632')
+            return b
+        b = rect(0, 0, w, h, wall) + rect(0, 0, w, 3, '#00000033')
+        floors = {'low': 2, 'mid': 5, 'roof': 6}[style]
+        top = h * (.18 if style == 'roof' else 0)
+        fh = (h - top) / floors
+        for fl in range(1, floors):
+            y = top + (fl - 1) * fh
+            for ix in range(4):
+                lit = rnd.random() < 0.5
+                b += rect(f'{w * (.08 + ix * .23):.1f}', f'{y + fh * .25:.1f}', f'{w * .16:.1f}', f'{fh * .5:.1f}',
+                          '#ffd98a' if lit else '#8fa3b5')
+        gy = top + (floors - 1) * fh
+        b += rect(0, gy, w, fh, '#3a3f46') + rect(w * .06, gy + fh * .3, w * .88, fh * .62, '#9fc4d8')
+        b += rect(w * .42, gy + fh * .3, w * .16, fh * .7, '#5a6670')
+        if style == 'roof':
+            b += rect(w * .45, top * .7, w * .04, top * .3, '#666') + rect(w * .51, top * .7, w * .04, top * .3, '#666')
+            b += rect(w * .04, 0, w * .92, top * .72, sign, rx=2)
+            b += text(w / 2, top * .52, name, f'{min(top * .45, w * .84 / max(n, 1)):.1f}', ink)
+        else:
+            b += rect(w * .04, gy - fh * .28, w * .92, fh * .3, sign, rx=1.5)
+            b += text(w / 2, gy - fh * .06, name, f'{min(fh * .22, w * .86 / max(n, 1)):.1f}', ink)
+        if style == 'mid':
+            b += rect(w * .86, h * .12, w * .12, h * .5, sign, rx=1.5)
+            for i, ch in enumerate(name[:6]):
+                b += text(w * .92, h * (.17 + i * .075), ch, f'{w * .085:.1f}', ink)
+        return b
+    return world(f'店_{name}', wm, hm, f)
+
+
+SCENERY_NAMES = ['松', '杉', '広葉樹', '紅葉', '家', 'ビル1', 'ビル2', 'ビル3', '電柱', '鳥居', '灯籠'] + \
+    [f'店_{sh[0]}' for sh in SHOPS]
 SCENERY_HALF_WIDTH = {'松': 3, '杉': 2.3, '広葉樹': 3.5, '紅葉': 3, '家': 4.5, 'ビル1': 7, 'ビル2': 9, 'ビル3': 5,
-                      'ビル4': 11, '電柱': 0.8, '鳥居': 3.5, '灯籠': 0.6}
+                      '電柱': 0.8, '鳥居': 3.5, '灯籠': 0.6}
+SCENERY_HALF_WIDTH.update({f'店_{sh[0]}': SHOP_SIZE[sh[1]][0] / 2 for sh in SHOPS})
 
 
 def limit_sign(v):
@@ -284,6 +363,7 @@ def pen_canvas():
 SPEEDO = (60, 306, 46)     # (中心x, 中心y, 半径) SVG 座標
 BCGAUGE = (428, 306, 46)
 GAUGE_SWEEP = 125     # 目盛りの角度（0 が −125°、最大が ＋125°）
+SPEEDO_MAX = 400      # 速度計の最大 [km/h]
 
 
 def _gauge(cx, cy, r, vmax, step_minor, step_label, unit, label_div=1, red_from=None):
@@ -326,7 +406,7 @@ def cab(name, body_col='#2f3a4a', face_col='#232a35'):
     b += rect(0, 240, 480, 3, ORANGE) + rect(0, 243, 480, 2, BLUE)
     b += rect(8, 250, 464, 106, face_col, rx=6)
     # 速度計・BC圧力計
-    b += _gauge(*SPEEDO, 160, 5, 20, 'km/h', red_from=130)
+    b += _gauge(*SPEEDO, SPEEDO_MAX, 10, 50, 'km/h', red_from=350)
     b += _gauge(*BCGAUGE, 600, 25, 100, 'BC kPa')
     b += rect(SPEEDO[0] - 21, SPEEDO[1] + 21, 42, 22, '#050608', rx=3)
     # ノッチ表示の枠
@@ -420,23 +500,28 @@ def title_screen():
         y = 252 + i * i * 0.55
         b += rect(0, y, 480, 1 + i * 0.25, '#3a3440')
     b += poly([(240, 250), (232, 360), (212, 360)], '#b8b8c0') + poly([(240, 250), (268, 360), (248, 360)], '#b8b8c0')
-    # T25000系の正面
+    # T25000系の正面（流線形の高速電車）
     cx = 240
-    b += f'<path d="M {cx - 78} 330 L {cx - 72} 170 Q {cx} 150 {cx + 72} 170 L {cx + 78} 330 Z" fill="url(#body)"/>'
-    b += f'<path d="M {cx - 66} 238 L {cx - 62} 182 Q {cx} 166 {cx + 62} 182 L {cx + 66} 238 Z" fill="#101820"/>'
-    b += rect(cx - 30, 174, 60, 12, '#1a0d00', rx=2) + text(cx, 183.5, '信町高速鉄道', 8.5, ORANGE)
-    b += rect(cx - 77, 250, 154, 9, ORANGE) + rect(cx - 77, 259, 154, 6, BLUE)
+    b += (f'<path d="M {cx - 92} 334 C {cx - 96} 268 {cx - 70} 196 {cx} 186 C {cx + 70} 196 {cx + 96} 268 {cx + 92} 334 Z" '
+          f'fill="url(#body)"/>')
+    b += (f'<path d="M {cx - 58} 236 C {cx - 50} 206 {cx - 26} 196 {cx} 195 C {cx + 26} 196 {cx + 50} 206 {cx + 58} 236 '
+          f'C {cx + 30} 228 {cx - 30} 228 {cx - 58} 236 Z" fill="#101820"/>')
+    b += (f'<path d="M {cx - 92} 300 C {cx - 60} 288 {cx + 60} 288 {cx + 92} 300 L {cx + 93} 310 '
+          f'C {cx + 60} 298 {cx - 60} 298 {cx - 93} 310 Z" fill="{ORANGE}"/>')
+    b += (f'<path d="M {cx - 93} 310 C {cx - 60} 298 {cx + 60} 298 {cx + 93} 310 L {cx + 93} 317 '
+          f'C {cx + 60} 305 {cx - 60} 305 {cx - 93} 317 Z" fill="{BLUE}"/>')
     for sx in (-1, 1):
-        b += circle(cx + sx * 52, 285, 8, '#fff7d6') + circle(cx + sx * 52, 285, 14, '#fff7d6', extra='opacity="0.25"')
-        b += rect(cx + sx * 52 - 7, 298, 14, 5, '#ff4040', rx=2)
-    b += rect(cx - 20, 270, 40, 18, '#2a3038', rx=2) + text(cx, 283, 'T25000', 8, '#e8eef5')
-    b += rect(cx - 80, 330, 160, 10, '#1b1d22')
+        b += f'<ellipse cx="{cx + sx * 58}" cy="276" rx="13" ry="6" fill="#fff7d6"/>'
+        b += f'<ellipse cx="{cx + sx * 58}" cy="276" rx="24" ry="11" fill="#fff7d6" opacity="0.22"/>'
+    b += rect(cx - 22, 250, 44, 14, '#2a3038', rx=2) + text(cx, 260.5, 'T25000', 8, '#e8eef5')
+    b += rect(cx - 96, 332, 192, 10, '#1b1d22')
     # 文字
     b += text(240, 52, '信町高速鉄道', 18, '#cfe3ff', extra='letter-spacing="6"')
     b += text(240, 104, '3D運転士', 48, '#ffffff', extra='stroke="#1e5aa8" stroke-width="2" paint-order="stroke"')
-    b += text(240, 132, '〜 T25000系で３つの路線を走ろう 〜', 13, '#ffe2b0')
-    b += rect(140, 334, 200, 20, '#000000', rx=10, extra='opacity="0.45"')
-    b += text(240, 348, 'スペースキーでスタート', 12, '#ffffff')
+    b += text(240, 132, '〜 最高350km/h の T25000系で３つの路線を走ろう 〜', 13, '#ffe2b0')
+    b += rect(120, 318, 240, 22, '#000000', rx=11, extra='opacity="0.5"')
+    b += text(240, 334, 'Enter キーかクリックでスタート', 12, '#ffffff')
+    b += text(240, 354, '※ 音が出ないときは、画面を一度クリックしてください', 9, '#cfd8e3', weight='normal')
     return svg(480, 360, b, defs)
 
 
@@ -460,6 +545,12 @@ def icon(label, color):
 # 効果音（22050Hz・モノラル・16bit の WAV）
 # ---------------------------------------------------------------------------
 RATE = 22050
+
+
+def _norm(x, peak):
+    """いちばん大きいところが peak（0〜1）になるように音量をそろえる。"""
+    m = float(np.abs(x).max())
+    return x * (peak / m) if m > 0 else x
 
 
 def _wav(x):
@@ -640,7 +731,22 @@ def snd_select():
     return _wav(np.sin(2 * np.pi * f * t) * _env(len(t), 0.005, 0.05) * 0.35)
 
 
-SOUNDS = {
+# 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
+_PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, '発車メロディ': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
+         'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
+         '結果': 0.9, '決定': 0.8}
+
+
+def _normalized(name, fn):
+    def make():
+        data, rate, count = fn()
+        with wave.open(io.BytesIO(data)) as w:
+            x = np.frombuffer(w.readframes(w.getnframes()), dtype='<i2').astype(float) / 32000
+        return _wav(_norm(x, _PEAK[name]))
+    return make
+
+
+SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '警笛': lambda: snd_horn(),
     '遠くの警笛': lambda: snd_horn(volume=0.45, dur=1.6, far=True),
     'ドアチャイム': snd_door_chime,
@@ -656,4 +762,12 @@ SOUNDS = {
     'ピタ停車': lambda: snd_arpeggio([1047, 1319, 1568, 2093, 2637], 0.06, 0.9, 0.3),
     '結果': snd_fanfare,
     '決定': snd_select,
+}.items()}
+
+# どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
+SOUND_SPRITES = {
+    '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', '発車メロディ', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
+            '結果', '決定'],
+    'モーター音': ['モーター'],
+    '走行音': ['走行音', 'ジョイント'],
 }

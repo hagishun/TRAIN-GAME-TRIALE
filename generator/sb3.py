@@ -372,6 +372,10 @@ def timer():
     return R('sensing_timer')
 
 
+def mouse_down():
+    return R('sensing_mousedown', shape='boolean')
+
+
 def reset_timer():
     return Blk('sensing_resettimer')
 

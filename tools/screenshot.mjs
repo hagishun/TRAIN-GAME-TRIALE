@@ -104,7 +104,7 @@ async function pressKey(page, k) {
 
 async function startRoute(page, n) {
     await page.waitForTimeout(800);
-    await pressKey(page, 'Space');
+    await pressKey(page, 'Enter');
     await page.waitForFunction(() => T.get('場面') === '路線選択');
     await page.waitForTimeout(500);
     await pressKey(page, String(n));
@@ -146,7 +146,7 @@ async function measureFps(browser, compiler) {
     await page.evaluate(() => { T.botOn = true; });
     await page.waitForTimeout(4000);
     // 駅の手前（ホームが見える）に移して、重い場面を測る
-    await teleport(page, {pos: 7550 - 420, speed: 60, notch: 0, next: 9});
+    await teleport(page, {pos: 31000 - 420, speed: 150, notch: -3, next: 9});
     await page.evaluate(() => { T.steps = 0; T.stepMs = 0; });
     const t0 = Date.now();
     await page.waitForTimeout(8000);
@@ -170,7 +170,7 @@ try {
         let {page, errors} = await openGame(browser, file);
         await page.waitForTimeout(1500);
         await shot(page, '01-title.png');
-        await pressKey(page, 'Space');
+        await pressKey(page, 'Enter');
         await page.waitForFunction(() => T.get('場面') === '路線選択');
         await page.waitForTimeout(800);
         await shot(page, '02-route-select.png');
@@ -181,35 +181,41 @@ try {
         await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
         await page.evaluate(() => { T.botOn = true; });
         await page.waitForTimeout(6000);
-        await teleport(page, {pos: 2050, speed: 64, notch: 0, next: 4});
+        await teleport(page, {pos: 4650, speed: 245, notch: 0, next: 3});
         await page.waitForTimeout(1500);
         await shot(page, '04-shinmachi-curve.png');
-        await teleport(page, {pos: 7550 - 150, speed: 42, notch: -3, next: 9, early: 22});
+        await teleport(page, {pos: 31000 - 150, speed: 42, notch: -3, next: 9, early: 22});
         await page.evaluate(() => { T.botOn = false; });
         await page.waitForTimeout(1200);
         await shot(page, '05-takata-approach.png');
         // 対向列車を出す
-        await teleport(page, {pos: 9100, speed: 70, notch: 0, next: 11});
+        // 通過駅（中ヶ野宮）を 300km/h で通過
+        await teleport(page, {pos: 39500 - 230, speed: 300, notch: 0, next: 11, early: 60});
+        await page.waitForTimeout(700);
+        await shot(page, '14-passing-station.png');
+        await teleport(page, {pos: 34500, speed: 300, notch: 0, next: 11, early: 120});
         await page.evaluate(() => {
             T.set('対向列車_出現率', 100);
             T.local('対向列車', '有無').value = 0;
             T.local('対向列車', '抽選タイマー').value = 999;
         });
         await page.waitForTimeout(300);
-        await page.evaluate(() => { T.local('対向列車', '先頭位置').value = Number(T.get('位置')) + 230; });
-        await page.waitForFunction(() => Number(T.local('対向列車', '先頭位置').value) - Number(T.get('位置')) < 70, null, {timeout: 20000});
+        await page.evaluate(() => {
+            T.local('対向列車', '先頭位置').value = Number(T.get('位置')) + 900;
+            T.local('対向列車', '列車の速さ').value = 70;
+        });
+        await page.waitForFunction(() => Number(T.local('対向列車', '先頭位置').value) - Number(T.get('位置')) < 260, null, {timeout: 20000});
         await shot(page, '06-opposing-train.png');
         await page.waitForFunction(() => Number(T.local('対向列車', '先頭位置').value) - Number(T.get('位置')) < -8, null, {timeout: 20000});
         await shot(page, '07-passing.png');
         // 停車して採点
-        await teleport(page, {pos: 9800 - 4.4, speed: 6.5, notch: -2, next: 11, early: 3});
+        await teleport(page, {pos: 42300 - 4.4, speed: 6.5, notch: -2, next: 11, early: 3});
         await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 20000});
         await page.waitForTimeout(900);
         await shot(page, '08-station-score.png');
         // 終点 → 結果画面
         await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
-        await page.evaluate(() => { for (const s of ['坂ヶ野']) T.get('成績').push(s + '  93点（+4cm 行き過ぎ・定時）'); });
-        await teleport(page, {pos: 12900 - 4.4, speed: 6.5, notch: -2, next: 13, early: 2});
+        await teleport(page, {pos: 61600 - 4.4, speed: 6.5, notch: -2, next: 13, early: 2});
         await page.waitForFunction(() => T.get('場面') === '結果' || document.title === 'x', null, {timeout: 30000});
         await page.waitForTimeout(1500);
         await shot(page, '09-result.png');
@@ -220,10 +226,10 @@ try {
         ({page, errors} = await openGame(browser, file));
         await startRoute(page, 2);
         await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
-        await teleport(page, {pos: 1000, speed: 55, notch: 3, next: 2});
+        await teleport(page, {pos: 2950, speed: 185, notch: 0, next: 2, early: 200});
         await page.waitForTimeout(1500);
         await shot(page, '10-jinja-fog-curve.png');
-        await teleport(page, {pos: 2800 - 140, speed: 38, notch: -3, next: 2, early: 20});
+        await teleport(page, {pos: 10400 - 140, speed: 38, notch: -3, next: 2, early: 20});
         await page.waitForTimeout(1500);
         await shot(page, '11-jinja-seimon-approach.png');
         console.log('  page errors:', errors.length ? errors : 'なし');
@@ -233,10 +239,10 @@ try {
         ({page, errors} = await openGame(browser, file));
         await startRoute(page, 3);
         await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
-        await teleport(page, {pos: 3000, speed: 105, notch: 0, next: 3});
+        await teleport(page, {pos: 8000, speed: 320, notch: 0, next: 3, early: 70});
         await page.waitForTimeout(1500);
         await shot(page, '12-tahara-seaside.png');
-        await teleport(page, {pos: 6300 - 120, speed: 36, notch: -2, next: 4, early: 20});
+        await teleport(page, {pos: 21500 - 120, speed: 36, notch: -2, next: 4, early: 20});
         await page.waitForTimeout(1500);
         await shot(page, '13-tahara-airport-approach.png');
         console.log('  page errors:', errors.length ? errors : 'なし');

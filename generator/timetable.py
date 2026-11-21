@@ -1,13 +1,13 @@
 """時刻表（各駅の到着時刻）を計算する。
 
 Scratch の「運転」スプライトと同じ物理（力行・走行抵抗・勾配・曲線抵抗）で、
-「制限いっぱいまで加速 → 2.8km/h/s のブレーキでぴったり止まる」という理想の運転をしたときの
+「制限いっぱいまで加速 → 3.4km/h/s のブレーキでぴったり止まる」という理想の運転をしたときの
 所要時間を出し、路線ごとの余裕（margin）を足して到着時刻にする。
 """
 import math
 
 DT = 0.02
-PLAN_BRAKE = 2.8      # 計画ブレーキ [km/h/s]
+PLAN_BRAKE = 3.4      # 計画ブレーキ [km/h/s]
 DWELL = 20            # 停車時間 [秒]（設定スプライトの「停車時間」と同じ）
 
 
@@ -86,22 +86,31 @@ def run_time(route, car, start, stop):
 
 
 def timetable(route, car):
-    """[(駅名, 位置, 'hh:mm:ss'), ...] を返す。始発駅の時刻は発車時刻。"""
+    """[(駅名, 位置, 'hh:mm:ss' または '通過', 種別), ...] を返す。始発駅の時刻は発車時刻。"""
     factor, extra = route['margin']
+    passing = set(route.get('passing', []))
     t = hms_to_sec(route['start_time'])
-    out = [(route['stations'][0][0], route['stations'][0][1], route['start_time'])]
-    for i in range(1, len(route['stations'])):
-        rt = run_time(route, car, route['stations'][i - 1][1], route['stations'][i][1])
-        arr = t + rt * factor + extra
-        arr = math.ceil(arr / 5) * 5
-        out.append((route['stations'][i][0], route['stations'][i][1], sec_to_hms(arr)))
+    st = route['stations']
+    out = [(st[0][0], st[0][1], route['start_time'], '停車')]
+    last_stop = st[0][1]
+    for name, pos in st[1:]:
+        if name in passing:
+            out.append((name, pos, '通過', '通過'))
+            continue
+        rt = run_time(route, car, last_stop, pos)
+        arr = math.ceil((t + rt * factor + extra) / 5) * 5
+        out.append((name, pos, sec_to_hms(arr), '停車'))
         t = arr + DWELL
+        last_stop = pos
     return out
 
 
 if __name__ == '__main__':
     from routes_data import ROUTES, CARS
     for r in ROUTES:
-        print(r['name'])
-        for row in timetable(r, CARS[0]):
+        tt = timetable(r, CARS[0])
+        total = hms_to_sec(tt[-1][2]) - hms_to_sec(tt[0][2])
+        legs = []
+        print(r['name'], f'所要 {total // 60}分{total % 60}秒')
+        for row in tt:
             print('  ', row)
