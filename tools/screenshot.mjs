@@ -3,6 +3,8 @@
 //
 //   node tools/screenshot.mjs            # docs/screenshots/*.png を作る
 //   node tools/screenshot.mjs --fps-only # フレームレートだけ測る
+//   node tools/screenshot.mjs --only airport,curves,accidents   # 一部の場面だけ撮る（main / airport / curves / accidents）
+//   （タッチボタン・クレジットの画面は node tools/tap_check.mjs --shots で撮る）
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -15,6 +17,8 @@ const SB3 = path.join(ROOT, 'train-driver-3d.sb3');
 const OUT = path.join(ROOT, 'docs', 'screenshots');
 const BUILD = path.join(ROOT, 'build');
 const fpsOnly = process.argv.includes('--fps-only');
+const onlyArg = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1].split(',') : null;
+const want = name => !onlyArg || onlyArg.includes(name);
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -92,7 +96,38 @@ async function openGame(browser, file) {
         null, {timeout: 60000});
     await page.evaluate(PAGE_HELPERS);
     await page.waitForFunction(() => T.get('場面') === 'タイトル', null, {timeout: 30000});
+    // ふつうの場面ではアクシデントを起こさない（撮りたいときだけ injectAccident で起こす）
+    await page.evaluate(() => T.set('アクシデント_起きやすさ', 0));
     return {page, errors};
+}
+
+// アクシデントを、いまの位置のすぐ先で起こす
+async function injectAccident(page, kind) {
+    await page.evaluate(kind => {
+        const t = T.sprite('アクシデント');
+        const L = n => Object.values(t.variables).find(v => v.name === n && v.type === 'list');
+        L('予定の種類').value = [kind];
+        L('予定の位置').value = [Number(T.get('位置')) + 30];
+    }, kind);
+    await page.waitForFunction(() => T.get('アクシデントの段階') === '知らせた', null, {timeout: 20000});
+}
+
+// 飛行機を置く（[位置, 高さ, 状態, 速さ, 会社] …）
+async function placePlanes(page, planes) {
+    await page.evaluate(planes => {
+        const t = T.sprite('飛行機');
+        const L = n => Object.values(t.variables).find(v => v.name === n && v.type === 'list');
+        for (const n of ['飛行機の位置', '飛行機の横', '飛行機の高さ', '飛行機の向き', '飛行機の角度', '飛行機の会社']) T.get(n).length = 0;
+        for (const n of ['飛行機の状態', '飛行機の速さ', '飛行機の音済']) L(n).value.length = 0;
+        for (const [pos, h, st, v, company] of planes) {
+            T.get('飛行機の位置').push(pos); T.get('飛行機の横').push(Number(T.get('滑走路の横'))); T.get('飛行機の高さ').push(h);
+            T.get('飛行機の向き').push(-1); T.get('飛行機の角度').push(st === '上昇' ? 10 : st === '進入' ? 3 : 0);
+            T.get('飛行機の会社').push(company);
+            L('飛行機の状態').value.push(st); L('飛行機の速さ').value.push(v); L('飛行機の音済').value.push(1);
+        }
+        T.local('飛行機', '着陸を見せた').value = 1;
+        T.set('飛行機_出現率', 0);
+    }, planes);
 }
 
 // Scratch はキーをフレームごとに調べるので、少し長めに押す
@@ -164,8 +199,8 @@ async function measureFps(browser, compiler) {
 
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
-    if (!fpsOnly) {
-        const file = await pack(true);
+    const file = fpsOnly ? null : await pack(true);
+    if (!fpsOnly && want('main')) {
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
         await page.waitForTimeout(1500);
@@ -248,7 +283,80 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    for (const compiler of [true, false]) {
+    if (!fpsOnly && want('airport')) {
+        // 信町空港: 近づくと着陸してくる飛行機、駅から見たエプロン・駐機中の飛行機・滑走路
+        const {page, errors} = await openGame(browser, file);
+        await startRoute(page, 3);
+        await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+        await teleport(page, {pos: 20480, speed: 110, notch: -2, next: 4, early: 40});
+        await placePlanes(page, [[22150, 0, '着陸滑走', 55, '信町エア'], [23600, 60, '進入', 70, 'うみかぜ航空']]);
+        await page.waitForTimeout(1200);
+        await shot(page, '40-airport-approach.png');
+        await teleport(page, {pos: 21497, speed: 0, notch: -8, next: 4, early: 0});
+        await placePlanes(page, [[22350, 0, '離陸滑走', 45, 'うみかぜ航空'], [23300, 45, '進入', 70, '信町エア']]);
+        await page.waitForTimeout(1500);
+        await shot(page, '41-airport-station.png');
+        console.log('  page errors:', errors.length ? errors : 'なし');
+        await page.close();
+    }
+    if (!fpsOnly && want('curves')) {
+        // カーブの入り口（奥の線路が曲がって見える）と途中（線路も景色も曲がる・流れる）
+        for (const [route, entry, middle, next, label] of [[1, 4720, 5420, 3, 'shinmachi'], [2, 6330, 6900, 2, 'jinja'],
+            [3, 23700, 24300, 6, 'tahara']]) {
+            const {page, errors} = await openGame(browser, file);
+            await startRoute(page, route);
+            await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+            const n = {1: 50, 2: 52, 3: 54}[route];
+            await teleport(page, {pos: entry, speed: route === 2 ? 160 : 230, notch: 0, next, early: 120});
+            await page.waitForTimeout(1200);
+            await shot(page, `${n}-curve-${label}-entry.png`);
+            await teleport(page, {pos: middle, speed: route === 2 ? 160 : 230, notch: 0, next, early: 120});
+            await page.waitForTimeout(1200);
+            await shot(page, `${n + 1}-curve-${label}-middle.png`);
+            console.log('  page errors:', errors.length ? errors : 'なし');
+            await page.close();
+        }
+    }
+    if (!fpsOnly && want('accidents')) {
+        // 代表的なアクシデント
+        const scenes = [
+            [2, 2000, 2, '倒木', 40, '60-accident-fallen-tree.png'],
+            [2, 2000, 2, '動物', 35, '61-accident-deer.png'],
+            [1, 16000, 9, '踏切', 70, '62-accident-level-crossing.png'],
+            [1, 46000, 13, '信号故障', 60, '63-accident-signal.png'],
+            [1, 16000, 9, '踏切', 1100, '64-accident-warning-light.png'],
+            [3, 8000, 3, '大雨', null, '65-accident-heavy-rain.png'],
+            [3, 5000, 3, '強風', null, '66-accident-strong-wind.png'],
+        ];
+        for (const [route, pos, next, kind, dist, name] of scenes) {
+            const {page, errors} = await openGame(browser, file);
+            await startRoute(page, route);
+            await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+            await teleport(page, {pos, speed: 180, notch: 0, next, early: 200});
+            await page.waitForTimeout(300);
+            await injectAccident(page, kind);
+            if (dist !== null) {
+                await page.evaluate(d => {
+                    T.set('位置', Number(T.get('障害物の位置')) - d);
+                    T.set('速度', d > 500 ? 150 : 0);
+                    T.set('ノッチ', d > 500 ? 0 : -8);
+                }, dist);
+                await page.waitForTimeout(dist > 500 ? 600 : 1200);
+            } else {
+                await page.waitForTimeout(1500);
+            }
+            // 点滅している「異常」表示灯と障害物の赤い光が、どちらも点いている瞬間に撮る
+            await page.waitForFunction(() => {
+                const t = T.vm.runtime.ioDevices.clock.projectTimer() % 2;
+                return t > 0.05 && t < 0.2;
+            }, null, {timeout: 10000, polling: 10});
+            await page.waitForTimeout(60);
+            await shot(page, name);
+            console.log('  page errors:', errors.length ? errors : 'なし');
+            await page.close();
+        }
+    }
+    for (const compiler of want('fps') || fpsOnly ? [true, false] : []) {
         const r = await measureFps(browser, compiler);
         console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);
     }

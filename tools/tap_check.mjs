@@ -198,6 +198,7 @@ await page.evaluate(() => {
     T.set('ノッチ', -2);
     T.set('ブレーキ率', 0.25);
     T.set('力行率', 0);
+    T.set('時刻の秒', Number(T.get('駅の時刻秒')[last - 1]) - 3);
 });
 await page.waitForFunction(() => T.get('場面') === '結果', null, {timeout: 30000});
 await page.waitForTimeout(1500);

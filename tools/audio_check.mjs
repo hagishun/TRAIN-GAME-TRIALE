@@ -97,6 +97,7 @@ const press = async k => { await page.keyboard.down(k); await page.waitForTimeou
 const report = {};
 report.ctxAtLoad = await state();
 await page.waitForFunction(() => A.T.get('場面') === 'タイトル');
+await page.evaluate(() => A.T.set('アクシデント_起きやすさ', 0));   // 音の測定にアクシデントの音がまざらないように
 await press('Enter');
 await page.waitForTimeout(500);
 report.ctxAfterKeyOnly = await state();
@@ -179,8 +180,29 @@ async function squealWindow(pos, label, ms) {
         `3.15kHz 付近の強さ 最大 ${r.bandMax.toFixed(1)}dB`);
     return r;
 }
+// ここからは、ほかの音がまざらないように対向列車を出さない
+await page.evaluate(() => {
+    const t = scaffolding.vm.runtime.targets.find(x => x.isOriginal && x.sprite.name === '対向列車');
+    A.T.set('対向列車_出現率', 0);
+    Object.values(t.variables).find(x => x.name === '有無').value = 0;
+    A.T.set('飛行機_出現率', 0);
+    A.T.set('飛行機_着陸を見せる距離', 0);
+});
+await page.waitForTimeout(3500);
 report.squealCurve = await squealWindow(23920, 'カーブ（半径2000m）', 7000);
 report.squealStraight = await squealWindow(26000, '直線', 3000);
+// 3 曲目（CLEX204、新鎌京橋の発車メロディ）も鳴らして測る。止まった状態で、モーター音・走行音・きしみ音は鳴っていない
+await page.evaluate(() => {
+    A.T.set('速度', 0);
+    A.T.set('ノッチ', -8);
+    A.T.set('ATS状態', 0);
+});
+await page.waitForTimeout(2500);
+await page.evaluate(() => {
+    A.T.set('発車する駅', A.T.get('駅名').indexOf('新鎌京橋') + 1);
+    scaffolding.vm.runtime.startHats('event_whenbroadcastreceived', {BROADCAST_OPTION: '発車メロディ'});
+});
+await page.waitForTimeout(11000);
 const log = await page.evaluate(() => A.log);
 const peaks = await page.evaluate(() => A.peaks);
 const levels = await page.evaluate(() => A.levels);

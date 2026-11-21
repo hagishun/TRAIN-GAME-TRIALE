@@ -18,7 +18,7 @@ def build_render(p):
     s.costume_svg('駅名標', *assets.station_board(None))
     for name in all_station_names():
         s.costume_svg(name, *assets.station_board(name, TRANSFER.get(name)))
-    for v in range(15, 135, 5):
+    for v in range(15, 355, 5):
         s.costume_svg(f'制限{v}', *assets.limit_sign(v))
     s.costume_svg('制限解除', *assets.limit_sign('解除'))
     s.costume_svg('停目', *assets.stop_marker('停'))
@@ -32,7 +32,7 @@ def build_render(p):
                   '■ 注意: ペンの絵はすべてのスプライトより下（奥）に描かれる。運転台や計器はスプライトなので手前に出る。\n'
                   '■ 駅名標: 駅名と同じ名前のコスチュームがあれば、その絵がホームに立つ（無ければ無地の「駅名標」）。\n'
                   '   駅名を変えたら、ここのコスチュームの名前と文字も変えると駅名標も変わる。\n'
-                  '■ 標識: 「制限60」のような名前のコスチュームを使う（15〜130 の 5 きざみ）。\n'
+                  '■ 標識: 「制限60」のような名前のコスチュームを使う（15〜350 の 5 きざみ。強風・大雨の規制にも使う）。\n'
                   '■ 3D の物の絵は「20 ピクセル ＝ 1 m」で描き、回転中心を根元（下の真ん中）にする。')
     for n in ('行の数', 'HF', '_d', '_z', '_s', '_X', '_cx', '_y', '_st', '_x1', '_x2', '_i', '_j', '_k', '_n', '_f',
               '_tz', '_ts', '_a', '_b', '_dX', '比', '枕木の色', 'レールの色', '架線の色', '端', '外', '向き', 'zs', 'ze',
