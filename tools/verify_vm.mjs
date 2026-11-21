@@ -213,7 +213,8 @@ async function runRoute(routeNo) {
     step(vm, 30);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
     const routeName = h.get('路線名');
-    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0};
+    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, planes: 0};
+    let planesWas = 0;
     let lastScene = '';
     let lastATS = 0;
     let oppWas = 0;
@@ -264,6 +265,12 @@ async function runRoute(routeNo) {
             }
             oppWas = opp;
         }
+        const planes = h.get('飛行機の位置').length;
+        if (planes > planesWas) {
+            log.planes += planes - planesWas;
+            log.events.push(`[${(frame / 30).toFixed(1)}s] 飛行機 ${h.get('飛行機の会社').slice(-1)[0]} 出現（位置 ${h.num('位置').toFixed(0)}m、飛行機 ${Math.round(h.get('飛行機の位置').slice(-1)[0])}m・高さ ${Math.round(h.get('飛行機の高さ').slice(-1)[0])}m）`);
+        }
+        planesWas = planes;
         for (const n of ['位置', '速度', 'ブレーキ率', '力行率', '時刻の秒']) {
             if (!Number.isFinite(h.num(n))) nanFrames++;
         }
@@ -295,7 +302,7 @@ for (const r of routes) {
     for (const line of log.results) origLog('    ' + line);
     origLog(`  総合評価: ${log.summary}`);
     origLog(`  最後の場面=${log.scene}  ゲーム内 ${log.gameSeconds.toFixed(0)} 秒 / 実時間 ${log.realSeconds.toFixed(1)} 秒` +
-        `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  NaN ${log.nanFrames}`);
+        `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  飛行機 ${log.planes} 機  NaN ${log.nanFrames}`);
 }
 // 始発駅をのぞく停車駅の数だけ成績が並んでいれば OK（通過駅は採点しない）
 const failed = all.filter(l => l.scene !== '結果' || l.results.length !== l.stops - 1 || l.nanFrames > 0);

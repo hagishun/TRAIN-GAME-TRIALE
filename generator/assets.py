@@ -226,7 +226,7 @@ def scenery(name):
         return world(name, 1.2, 2.6, f)
     if name.startswith('店_'):
         return shop(*next(sh for sh in SHOPS if sh[0] == name[2:]))
-    raise KeyError(name)
+    return airport_costume(name)
 
 
 # 沿線の店（コスチューム名は「店_店名」）。看板の文字はコスチュームの中の文字なので、
@@ -306,11 +306,174 @@ def shop(name, style, wall, sign, ink):
     return world(f'店_{name}', wm, hm, f)
 
 
+# ---------------------------------------------------------------------------
+# 信町空港（田原海岸線）の建物と飛行機。航空会社は架空。
+#   飛行機の絵は 20px = 1m、回転中心は車輪の下（地面）。「_右」「_左」は横から見た絵で、機首の向き。
+#   「_前」は正面（遠くから向かってくる・遠ざかる機体）。
+# ---------------------------------------------------------------------------
+AIRLINES = {
+    # 名前: (尾翼の色, 帯の色, 英語の名前)
+    '信町エア': (BLUE, ORANGE, 'SHINMACHI AIR'),
+    'うみかぜ航空': ('#1f8f8c', '#7fd3e0', 'UMIKAZE AIRLINES'),
+}
+PLANE_LEN, PLANE_SPAN, PLANE_H = 38, 36, 13
+
+
+def plane_side(airline, facing):
+    """横から見た旅客機（全長 38m）。facing は機首の向き '右' か '左'。"""
+    tail, stripe, label = AIRLINES[airline]
+    w, h = PLANE_LEN * PX_PER_M, PLANE_H * PX_PER_M
+    flip = facing == '左'
+    X = (lambda x: w - x) if flip else (lambda x: x)
+
+    def P(pts, fill, extra=''):
+        return poly([(X(x), y) for x, y in pts], fill, extra)
+
+    cy, r = h - 68, 40          # 胴体の中心の高さ（地面から 3.4m）と半径 2m
+    b = ''
+    # 水平尾翼（奥側）・垂直尾翼
+    b += P([(20, cy - 18), (95, cy - 26), (130, cy - 14), (40, cy - 8)], '#9aa3ad')
+    b += P([(28, cy - 30), (70, 8), (118, 8), (150, cy - 34)], tail)
+    b += P([(52, 60), (80, 22), (112, 22), (122, 60)], stripe, 'opacity="0.9"')
+    # 胴体（機首は丸く、尾部は上に細くなる）
+    body = [(16, cy - 28), (150, cy - r), (660, cy - r), (705, cy - 34), (735, cy - 14), (744, cy + 4), (735, cy + 22),
+            (700, cy + 36), (640, cy + r), (170, cy + r), (60, cy + 4)]
+    b += P(body, '#f4f6f8', 'stroke="#c4cad0" stroke-width="1.5"')
+    b += P([(70, cy + 8), (170, cy + 18), (650, cy + 18), (700, cy + 24), (690, cy + 30), (640, cy + 32), (170, cy + 32)],
+           stripe)
+    b += P([(170, cy + 32), (640, cy + 32), (690, cy + 30), (640, cy + r), (170, cy + r)], '#d9dee3')
+    # 客室の窓・操縦室の窓・ドア
+    for i in range(34):
+        wx = 175 + i * 14.5
+        b += rect(f'{X(wx) - 3:.1f}', cy - 12, 6, 8, '#2a3644', rx=2.5)
+    b += P([(694, cy - 18), (712, cy - 24), (730, cy - 12), (708, cy - 8)], '#1d2733')
+    for dx in (160, 610):
+        b += rect(f'{X(dx) - 7:.1f}', cy - 24, 14, 40, 'none', rx=3, extra='stroke="#aab2bb" stroke-width="1.5"')
+    # 主翼（手前側）とエンジン
+    b += P([(300, cy + 14), (450, cy + 6), (470, cy + 16), (330, cy + 28)], '#b8c0c8')
+    b += f'<ellipse cx="{X(410):.1f}" cy="{cy + 38}" rx="50" ry="15" fill="#c9cfd5" stroke="#8d969f" stroke-width="2"/>'
+    b += f'<ellipse cx="{X(456):.1f}" cy="{cy + 38}" rx="6" ry="12" fill="#3a4048"/>'
+    # 主脚・前脚
+    for gx in (350, 368):
+        b += line(X(gx), cy + 30, X(gx), h - 10, '#555', 5) + circle(X(gx), h - 9, 9, '#222')
+    b += line(X(650), cy + 30, X(650), h - 8, '#555', 4) + circle(X(650), h - 7, 7, '#222')
+    # 会社名
+    b += text(X(430), cy - 22, f'{airline}  {label}', 22, tail)
+    return svg(w, h, b), w / 2, h
+
+
+def plane_front(airline):
+    """正面から見た旅客機（翼幅 36m）。向かってくる機体にも、遠ざかる機体にも使う。"""
+    tail, stripe, _ = AIRLINES[airline]
+    w, h = PLANE_SPAN * PX_PER_M, PLANE_H * PX_PER_M
+    cx, cy, r = w / 2, h - 68, 40
+    b = ''
+    # 垂直尾翼・水平尾翼（奥）
+    b += poly([(cx - 7, cy - r + 4), (cx - 5, 6), (cx + 5, 6), (cx + 7, cy - r + 4)], tail)
+    b += poly([(cx - 125, cy - 40), (cx + 125, cy - 40), (cx + 125, cy - 33), (cx - 125, cy - 33)], '#9aa3ad')
+    # 主翼（少し上に反っている）
+    b += poly([(4, cy - 4), (cx - 30, cy + 14), (cx + 30, cy + 14), (w - 4, cy - 4), (w - 4, cy + 2), (cx + 30, cy + 24),
+               (cx - 30, cy + 24), (4, cy + 2)], '#c3cad1')
+    for sx in (-1, 1):
+        b += rect(cx + sx * 352 - 3, cy - 14, 6, 12, stripe)        # 翼端
+        ex = cx + sx * 130
+        b += line(ex, cy + 16, ex, cy + 22, '#8d969f', 6)
+        b += circle(ex, cy + 44, 27, '#c9cfd5', 'stroke="#8d969f" stroke-width="2"') + circle(ex, cy + 44, 18, '#2a3038')
+        b += circle(ex, cy + 44, 5, '#9aa3ad')
+        b += line(cx + sx * 34, cy + r - 6, cx + sx * 34, h - 10, '#555', 5) + rect(cx + sx * 34 - 9, h - 18, 18, 18, '#222',
+                                                                                   rx=4)
+    b += line(cx, cy + r - 4, cx, h - 8, '#555', 4) + rect(cx - 6, h - 15, 12, 15, '#222', rx=3)
+    # 胴体（丸）と操縦室の窓・帯
+    b += circle(cx, cy, r, '#f4f6f8', 'stroke="#c4cad0" stroke-width="1.5"')
+    b += f'<path d="M {cx - r + 3} {cy + 12} Q {cx} {cy + 26} {cx + r - 3} {cy + 12} L {cx + r - 6} {cy + 20} Q {cx} {cy + 33} {cx - r + 6} {cy + 20} Z" fill="{stripe}"/>'
+    b += poly([(cx - 26, cy - 12), (cx - 6, cy - 16), (cx - 6, cy - 4), (cx - 28, cy - 2)], '#1d2733')
+    b += poly([(cx + 26, cy - 12), (cx + 6, cy - 16), (cx + 6, cy - 4), (cx + 28, cy - 2)], '#1d2733')
+    b += circle(cx - 46, cy + 18, 5, '#fff7d6') + circle(cx + 46, cy + 18, 5, '#fff7d6')
+    return svg(w, h, b), w / 2, h
+
+
+def airport_building(name):
+    if name in ('ターミナル', 'ターミナル_看板'):
+        def f(w, h):
+            defs_id = 'g' + str(abs(hash(name)) % 1000)
+            b = (f'<defs><linearGradient id="{defs_id}" x1="0" y1="0" x2="0" y2="1">'
+                 f'<stop offset="0" stop-color="#a9d0e8"/><stop offset="1" stop-color="#5e8fb4"/></linearGradient></defs>')
+            b += rect(0, h - 20, w, 20, '#c9c4b8')
+            b += rect(10, 60, w - 20, h - 80, f'url(#{defs_id})')
+            for x in range(10, w - 9, 30):
+                b += rect(x, 60, 3, h - 80, '#e8eef2')
+            for y in (150, 240):
+                b += rect(10, y, w - 20, 4, '#e8eef2')
+            b += f'<path d="M -2 66 Q {w / 2} 18 {w + 2} 66 L {w + 2} 52 Q {w / 2} 2 -2 52 Z" fill="#f4f5f2" stroke="#c8ccd0"/>'
+            b += rect(w * .35, h - 70, w * .3, 8, '#f4f5f2') + rect(w * .38, h - 62, w * .24, 42, '#3e5a70')
+            if name == 'ターミナル_看板':
+                b += rect(w * .12, 84, w * .76, 62, '#16324f', rx=4)
+                b += text(w / 2, 124, '信町空港', 34, '#ffffff', extra='letter-spacing="6"')
+                b += text(w / 2, 141, 'SHINMACHI AIRPORT', 13, '#ffd27a', extra='letter-spacing="2"')
+            return b
+        return world(name, 30, 16, f)
+    if name == '管制塔':
+        def f(w, h):
+            b = poly([(60, h), (140, h), (128, h - 120), (72, h - 120)], '#d6d8d4')
+            b += rect(76, 210, 48, h - 330, '#e2e4e0') + rect(96, 230, 8, h - 360, '#b9bcb8')
+            b += poly([(30, 210), (170, 210), (190, 120), (10, 120)], '#2c4a58')
+            for x in range(26, 180, 22):
+                b += line(x, 124, x + (2 if x > 100 else -2), 206, '#cfd6da', 2)
+            b += rect(4, 104, 192, 18, '#f2f3f0') + rect(40, 210, 120, 14, '#f2f3f0')
+            b += rect(97, 40, 6, 64, '#9a9da0') + rect(70, 80, 60, 6, '#9a9da0') + circle(100, 36, 6, '#ff3b30')
+            b += text(100, 260, 'TOWER', 18, '#5a6670')
+            return b
+        return world(name, 10, 46, f)
+    if name == '格納庫':
+        def f(w, h):
+            b = rect(0, 120, w, h - 120, '#c4c8cc')
+            b += f'<path d="M 0 130 Q {w / 2} -60 {w} 130 Z" fill="#9aa4ae"/>'
+            b += rect(70, 170, w - 140, h - 170, '#dfe3e6')
+            for x in range(70, w - 69, 86):
+                b += rect(x, 170, 3, h - 170, '#aab2ba')
+            b += text(w / 2, 155, 'SHINMACHI AIR  MAINTENANCE', 26, BLUE)
+            return b
+        return world(name, 50, 20, f)
+    if name == '吹き流し':
+        def f(w, h):
+            b = rect(4, 0, 4, h, '#8d8a84')
+            for i in range(5):
+                x0 = 8 + i * 10
+                b += poly([(x0, 4 + i * 1.6), (x0 + 10, 4 + (i + 1) * 1.6), (x0 + 10, 24 - (i + 1) * 1.6),
+                           (x0, 24 - i * 1.6)], '#ff6a1a' if i % 2 == 0 else '#ffffff')
+            return b
+        return world(name, 3, 6.5, f)
+    if name == '進入灯':
+        def f(w, h):
+            b = rect(w / 2 - 3, 12, 6, h - 12, '#8d8a84') + rect(4, 8, w - 8, 6, '#6d6a64')
+            for i in range(7):
+                b += circle(10 + i * (w - 20) / 6, 8, 5, '#fff3b0')
+            return b
+        return world(name, 8, 3, f)
+    raise KeyError(name)
+
+
+AIRPORT_NAMES = ['ターミナル', 'ターミナル_看板', '管制塔', '格納庫', '吹き流し', '進入灯']
+PLANE_NAMES = [f'飛行機_{a}_{v}' for a in AIRLINES for v in ('右', '左', '前')]
+PARKED_NAMES = [f'駐機_{a}' for a in AIRLINES]
+
+
+def airport_costume(name):
+    if name.startswith('飛行機_'):
+        _, airline, view = name.split('_')
+        return plane_front(airline) if view == '前' else plane_side(airline, view)
+    if name.startswith('駐機_'):
+        return plane_side(name[3:], '右')
+    return airport_building(name)
+
+
 SCENERY_NAMES = ['松', '杉', '広葉樹', '紅葉', '家', 'ビル1', 'ビル2', 'ビル3', '電柱', '鳥居', '灯籠'] + \
-    [f'店_{sh[0]}' for sh in SHOPS]
+    [f'店_{sh[0]}' for sh in SHOPS] + AIRPORT_NAMES + PARKED_NAMES + PLANE_NAMES
 SCENERY_HALF_WIDTH = {'松': 3, '杉': 2.3, '広葉樹': 3.5, '紅葉': 3, '家': 4.5, 'ビル1': 7, 'ビル2': 9, 'ビル3': 5,
-                      '電柱': 0.8, '鳥居': 3.5, '灯籠': 0.6}
+                      '電柱': 0.8, '鳥居': 3.5, '灯籠': 0.6, 'ターミナル': 15, 'ターミナル_看板': 15, '管制塔': 5,
+                      '格納庫': 25, '吹き流し': 1.5, '進入灯': 4}
 SCENERY_HALF_WIDTH.update({f'店_{sh[0]}': SHOP_SIZE[sh[1]][0] / 2 for sh in SHOPS})
+SCENERY_HALF_WIDTH.update({n: PLANE_LEN / 2 for n in PARKED_NAMES + PLANE_NAMES})
 
 
 def limit_sign(v):
@@ -722,6 +885,18 @@ def snd_fanfare():
     return _wav(out)
 
 
+def snd_jet():
+    """遠くを通る旅客機の「ゴォー」という音（低いうなりと、高いキーンという音が少し下がる）。"""
+    dur = 5.0
+    t = _t(dur)
+    env = np.minimum(1, t / 1.6) * np.minimum(1, (dur - t) / 2.2)
+    roar = _lowpass(_lowpass(_noise(len(t), 31), 700), 500) * 3.0
+    hiss = (_noise(len(t), 32) - _lowpass(_noise(len(t), 32), 1800)) * 0.25
+    f = 2600 - 500 * t / dur
+    whine = np.sin(2 * np.pi * np.cumsum(f) / RATE) * 0.12 * np.exp(-0.4 * t)
+    return _wav((roar + hiss + whine) * env * 0.5)
+
+
 def snd_select():
     t = _t(0.16)
     f = np.where(t < 0.07, 880, 1320)
@@ -731,7 +906,7 @@ def snd_select():
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
 _PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8}
+         '結果': 0.9, '決定': 0.8, '飛行機': 0.7}
 
 
 def _normalized(name, fn):
@@ -758,12 +933,13 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     'ピタ停車': lambda: snd_arpeggio([1047, 1319, 1568, 2093, 2637], 0.06, 0.9, 0.3),
     '結果': snd_fanfare,
     '決定': snd_select,
+    '飛行機': snd_jet,
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
 SOUND_SPRITES = {
     '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
-            '結果', '決定'],
+            '結果', '決定', '飛行機'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
 }

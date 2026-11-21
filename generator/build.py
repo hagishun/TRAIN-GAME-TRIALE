@@ -20,6 +20,7 @@ def build(path):
     render.build_scenery(p)
     render.build_render(p)
     render.build_opposing(p)
+    render.build_planes(p)
     data.build_settings(p)
     data.build_routes(p)
     data.build_cars(p)
