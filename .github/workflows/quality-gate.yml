@@ -1,0 +1,42 @@
+name: Quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: python3 -m pip install numpy==2.5.5
+      - run: npm ci --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      - name: 再生成したプロジェクトとアセットを比較
+        run: |
+          cp train-driver-3d.sb3 /tmp/committed-train.sb3
+          python3 generator/build.py
+          python3 - <<'PY'
+          import zipfile
+
+          with zipfile.ZipFile('/tmp/committed-train.sb3') as committed, \
+               zipfile.ZipFile('train-driver-3d.sb3') as generated:
+              a, b = committed.namelist(), generated.namelist()
+              if len(a) != len(set(a)) or len(b) != len(set(b)) or set(a) != set(b):
+                  raise SystemExit('アーカイブ内のファイル名が一致しません')
+              different = [name for name in a if committed.read(name) != generated.read(name)]
+              if different:
+                  raise SystemExit('内容が一致しません: ' + ', '.join(different))
+          print('project.json と全アセットが一致しました')
+          PY
+      - name: 固定した乱数と時計で3路線を自動運転
+        run: node tools/verify_vm.mjs --quiet
