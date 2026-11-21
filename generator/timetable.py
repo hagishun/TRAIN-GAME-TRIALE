@@ -105,12 +105,18 @@ def timetable(route, car):
     return out
 
 
+def service_timetable(svc, car):
+    """運行（種別つきの直通列車）の時刻表。両数は種別で決まる。"""
+    from routes_data import service_route, train_type
+    return timetable(service_route(svc), dict(car, cars=train_type(svc['type'])['cars']))
+
+
 if __name__ == '__main__':
-    from routes_data import ROUTES, CARS
-    for r in ROUTES:
-        tt = timetable(r, CARS[0])
+    from routes_data import ROUTES, CARS, SERVICES
+    rows = [(r['name'], timetable(r, CARS[0])) for r in ROUTES]
+    rows += [(f'{s["type"]} {s["dest"]}行', service_timetable(s, CARS[0])) for s in SERVICES]
+    for name, tt in rows:
         total = hms_to_sec(tt[-1][2]) - hms_to_sec(tt[0][2])
-        legs = []
-        print(r['name'], f'所要 {total // 60}分{total % 60}秒')
+        print(name, f'所要 {total // 60}分{total % 60}秒')
         for row in tt:
             print('  ', row)
