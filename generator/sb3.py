@@ -308,6 +308,10 @@ def when_clone():
     return Hat('control_start_as_clone')
 
 
+def when_clicked():
+    return Hat('event_whenthisspriteclicked')
+
+
 def broadcast(name):
     return Blk('event_broadcast', {'BROADCAST_INPUT': (name, 'broadcast')})
 
@@ -374,6 +378,12 @@ def timer():
 
 def mouse_down():
     return R('sensing_mousedown', shape='boolean')
+
+
+def touching_mouse():
+    return R('sensing_touchingobject',
+             {'TOUCHINGOBJECTMENU': ('_mouse_', ('menu', 'sensing_touchingobjectmenu', 'TOUCHINGOBJECTMENU'))},
+             shape='boolean')
 
 
 def reset_timer():

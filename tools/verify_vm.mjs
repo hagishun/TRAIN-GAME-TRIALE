@@ -5,6 +5,9 @@
 //   node tools/verify_vm.mjs --route 2 --reckless  # 制限を無視して走る（ATS の確認）
 //   node tools/verify_vm.mjs --opp 100             # 対向列車の出現率を 100% にする
 //   node tools/verify_vm.mjs --style careful       # 運転のうまさ: expert（上手）/ careful（丁寧）/ sloppy（雑）
+//   node tools/verify_vm.mjs --accident 100        # アクシデントの起きやすさ [%]（100 で毎回 2 件）
+//   node tools/verify_vm.mjs --route 2 --plan 倒木@3000,落石@11000   # 起きるアクシデントを決めて走る（種類@場所m）
+//   node tools/verify_vm.mjs --route 3 --plan 動物@6000 --ignore-accidents   # アクシデントを無視して走る（当たったときの確認）
 //
 // 時計（Date.now）を偽物にして 1 フレーム = 1/30 秒ずつ進めるので、実時間より速く検証できる。
 import fs from 'fs';
@@ -21,6 +24,9 @@ const sb3Path = opt('--file', path.join(path.dirname(new URL(import.meta.url).pa
 const routes = opt('--route', null) ? [Number(opt('--route'))] : [1, 2, 3];
 const reckless = args.includes('--reckless');
 const oppRate = opt('--opp', null);
+const accidentRate = opt('--accident', null);
+const plan = opt('--plan', null);
+const ignoreAccidents = args.includes('--ignore-accidents');
 const quiet = args.includes('--quiet');
 const trace = args.includes('--trace');
 const style = opt('--style', 'expert');
@@ -129,9 +135,13 @@ function desiredNotch(h, state) {
     const pos = h.num('位置');
     const lim = h.num('現在の制限');
     const idx = h.num('次の駅番号');
-    const stop = Number(h.get('駅の位置')[idx - 1]);
-    if (state.station !== idx) {
-        state.station = idx;
+    const stationStop = Number(h.get('駅の位置')[idx - 1]);
+    // アクシデント（障害物・赤信号・非常通報）で止まる所があるときは、そこを目標にする
+    const temp = ignoreAccidents ? 0 : h.num('臨時停止位置');
+    const stop = temp > 0 && temp < stationStop ? temp : stationStop;
+    state.temp = temp > 0 && temp < stationStop;
+    if (state.station !== idx + ':' + temp) {
+        state.station = idx + ':' + temp;
         state.creep = false;
         state.offset = STYLE.aim[0] + (STYLE.aim[1] - STYLE.aim[0]) * rand();
     }
@@ -168,6 +178,7 @@ function desiredNotch(h, state) {
 }
 
 function brakeToStop(h, v, d, per, grade, state) {
+    if (v < 0.05 && state.temp) return -8;   // アクシデントで止まったら、作業が終わるまで待つ
     if (v < 0.05) {
         if (state.dReal > state.tolerance - 0.3) {
             state.offset = 0;   // 手前すぎて採点されなかったので、停止位置まで進め直す
@@ -202,6 +213,7 @@ async function runRoute(routeNo) {
     vm.greenFlag();
     step(vm, 20);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
+    if (accidentRate !== null) h.set('アクシデント_起きやすさ', Number(accidentRate));
     if (h.get('場面') !== 'タイトル') throw new Error('タイトル画面にならない: ' + h.get('場面'));
     tap(vm, 'space', 3);
     step(vm, 5);
@@ -212,13 +224,43 @@ async function runRoute(routeNo) {
     tap(vm, String(routeNo), 3);
     step(vm, 30);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
+    if (plan) {
+        // アクシデントの予定を書きかえる（場所の順に並べる）
+        const items = plan.split(',').map(x => x.split('@')).map(([k, p]) => [k, Number(p)]).sort((a, b) => a[1] - b[1]);
+        const acc = h.sprite('アクシデント');
+        const lv = n => Object.values(acc.variables).find(v => v.name === n);
+        lv('予定の位置').value = items.map(x => x[1]);
+        lv('予定の種類').value = items.map(x => x[0]);
+    }
     const routeName = h.get('路線名');
-    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0};
+    const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, accidents: []};
+    let lastKind = '';
     let lastScene = '';
     let lastATS = 0;
     let oppWas = 0;
     let keyHeld = null;
     const state = {creep: false};
+    // 発車メロディ・ドアチャイム・ドアの合図を記録する（発車の流れの確認用）
+    const departures = [];
+    const origStartHats = vm.runtime.startHats.bind(vm.runtime);
+    vm.runtime.startHats = (op, fields, target) => {
+        const name = fields && fields.BROADCAST_OPTION;
+        if (op === 'event_whenbroadcastreceived' && ['発車メロディ', 'ドアチャイム', 'ドア'].includes(name)) {
+            const t = h.num('時刻の秒');
+            if (name === '発車メロディ') {
+                // 遅れて着いたときは、そのぶん発車も遅れてよい
+                const late = departures.length ? Math.max(0, Number(h.local('採点', '到着差'))) : 0;
+                departures.push({station: h.get('発車する駅'), melody: t, late});
+            }
+            else if (departures.length && name === 'ドアチャイム') departures[departures.length - 1].chime = t;
+            else if (departures.length && name === 'ドア') {
+                // ドアチャイムのあとの「ドア」がドアの閉まる音（変数「ドア」と同じ名前のメッセージがあるので順番で見る）
+                const d = departures[departures.length - 1];
+                if (d.chime !== undefined && d.door === undefined) d.door = t;
+            }
+        }
+        return origStartHats(op, fields, target);
+    };
     const t0 = realNow();
     const maxFrames = 30 * 60 * 40;
     let nanFrames = 0;
@@ -246,12 +288,24 @@ async function runRoute(routeNo) {
         const fs0 = realNow();
         step(vm, 1);
         log.maxFrameMs = Math.max(log.maxFrameMs, realNow() - fs0);
+        // ブラウザと同じように、フレームのあいだに Promise（音量ブロックなど）を進める
+        await new Promise(r => setImmediate(r));
+        if (departures.length && departures[departures.length - 1].song === undefined) {
+            departures[departures.length - 1].song = h.local('発車メロディ', '曲');
+        }
         const ats = h.num('ATS状態');
         if (ats !== lastATS) {
             if (ats === 1) log.ats++;
             if (ats === 2) log.atsEB++;
             log.events.push(`[${(frame / 30).toFixed(1)}s] ATS状態=${ats} 速度=${h.num('速度').toFixed(1)} 制限=${h.num('現在の制限')}`);
             lastATS = ats;
+        }
+        const kind = h.local('アクシデント', '種類');
+        if (kind !== lastKind) {
+            if (kind) log.events.push(`[${(frame / 30).toFixed(1)}s] アクシデント「${kind}」 位置=${h.num('位置').toFixed(0)} 速度=${h.num('速度').toFixed(0)} 止まる所=${Number(h.local('アクシデント', '止まる所')).toFixed(0)} 案内=${h.get('案内')}`);
+            else log.events.push(`[${(frame / 30).toFixed(1)}s] アクシデント終わり 案内=${h.get('案内')}`);
+            if (kind) log.accidents.push(kind);
+            lastKind = kind;
         }
         const opp = Number(h.local('対向列車', '有無'));
         if (opp !== oppWas) {
@@ -274,6 +328,8 @@ async function runRoute(routeNo) {
     }
     log.scene = h.get('場面');
     log.results = h.get('成績').slice();
+    log.stationResults = log.results.filter(r => !r.startsWith('【アクシデント】'));
+    log.planned = h.local('アクシデント', '予定の種類');
     log.summary = h.get('総合評価');
     log.gameSeconds = frame / 30;
     log.realSeconds = elapsed;
@@ -281,6 +337,15 @@ async function runRoute(routeNo) {
     log.stations = h.get('駅名').length;
     log.stops = h.get('駅の種別').filter(k => k === '停車').length;
     log.blocks = 0;
+    // 発車の流れ: 発車メロディ → ドアチャイム → ドアが閉まる。発車時刻（定刻）との差 [秒]
+    const times = h.get('駅の時刻秒').map(Number);
+    const kinds = h.get('駅の種別');
+    const stopTimes = times.filter((_, i) => kinds[i] === '停車');
+    const dwell = h.num('停車時間');
+    log.departures = departures.map((d, i) => {
+        const planned = i === 0 ? stopTimes[0] : stopTimes[i] + dwell;
+        return {...d, planned, rel: k => (d[k] - planned).toFixed(1)};
+    });
     vm.stopAll();
     return log;
 }
@@ -294,11 +359,19 @@ for (const r of routes) {
     origLog('  成績:');
     for (const line of log.results) origLog('    ' + line);
     origLog(`  総合評価: ${log.summary}`);
+    origLog(`  アクシデント: ${log.accidents.length ? log.accidents.join('・') : 'なし'}`);
+    origLog('  発車の流れ（発車時刻との差 [秒]）:');
+    for (const d of log.departures) {
+        origLog(`    ${d.station} ♪${d.song}  メロディ ${d.rel('melody')}  チャイム ${d.rel('chime')}  ドア閉 ${d.rel('door')}`);
+    }
     origLog(`  最後の場面=${log.scene}  ゲーム内 ${log.gameSeconds.toFixed(0)} 秒 / 実時間 ${log.realSeconds.toFixed(1)} 秒` +
         `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  NaN ${log.nanFrames}`);
 }
-// 始発駅をのぞく停車駅の数だけ成績が並んでいれば OK（通過駅は採点しない）
-const failed = all.filter(l => l.scene !== '結果' || l.results.length !== l.stops - 1 || l.nanFrames > 0);
+// 始発駅をのぞく停車駅の数だけ成績が並んでいれば OK（通過駅は採点しない）。
+// 終点をのぞく停車駅すべてで、発車メロディ → ドアチャイム → ドア閉 の順に進んでいること
+const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
+    !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
+const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 || badDeparture(l));
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');

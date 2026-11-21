@@ -92,6 +92,8 @@ async function openGame(browser, file) {
         null, {timeout: 60000});
     await page.evaluate(PAGE_HELPERS);
     await page.waitForFunction(() => T.get('場面') === 'タイトル', null, {timeout: 30000});
+    // でたらめなアクシデントは起こさない（撮りたい場面が変わらないように。アクシデントの写真は決めて起こす）
+    await page.evaluate(() => T.set('アクシデント_起きやすさ', 0));
     return {page, errors};
 }
 
@@ -184,6 +186,13 @@ try {
         await teleport(page, {pos: 4650, speed: 245, notch: 0, next: 3});
         await page.waitForTimeout(1500);
         await shot(page, '04-shinmachi-curve.png');
+        // カーブの入り口（左カーブ 5000m〜 半径2200m の手前）と、カーブの中
+        await teleport(page, {pos: 4780, speed: 240, notch: 0, next: 3});
+        await page.waitForTimeout(1200);
+        await shot(page, '24-curve-shinmachi-entry.png');
+        await teleport(page, {pos: 5350, speed: 240, notch: 0, next: 3});
+        await page.waitForTimeout(1200);
+        await shot(page, '25-curve-shinmachi-inside.png');
         await teleport(page, {pos: 31000 - 150, speed: 42, notch: -3, next: 9, early: 22});
         await page.evaluate(() => { T.botOn = false; });
         await page.waitForTimeout(1200);
@@ -210,7 +219,7 @@ try {
         await shot(page, '07-passing.png');
         // 停車して採点
         await teleport(page, {pos: 42300 - 4.4, speed: 6.5, notch: -2, next: 11, early: 3});
-        await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 20000});
+        await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 60000});
         await page.waitForTimeout(900);
         await shot(page, '08-station-score.png');
         // 終点 → 結果画面
@@ -229,6 +238,13 @@ try {
         await teleport(page, {pos: 2950, speed: 185, notch: 0, next: 2, early: 200});
         await page.waitForTimeout(1500);
         await shot(page, '10-jinja-fog-curve.png');
+        // 右カーブ 6500m〜 半径900m の入り口と中
+        await teleport(page, {pos: 6330, speed: 160, notch: 0, next: 2, early: 150});
+        await page.waitForTimeout(1200);
+        await shot(page, '26-curve-jinja-entry.png');
+        await teleport(page, {pos: 6800, speed: 160, notch: 0, next: 2, early: 150});
+        await page.waitForTimeout(1200);
+        await shot(page, '27-curve-jinja-inside.png');
         await teleport(page, {pos: 10400 - 140, speed: 38, notch: -3, next: 2, early: 20});
         await page.waitForTimeout(1500);
         await shot(page, '11-jinja-seimon-approach.png');
@@ -242,11 +258,56 @@ try {
         await teleport(page, {pos: 8000, speed: 320, notch: 0, next: 3, early: 70});
         await page.waitForTimeout(1500);
         await shot(page, '12-tahara-seaside.png');
+        // 右カーブ 1800m〜 半径3000m の入り口と中
+        await teleport(page, {pos: 1600, speed: 150, notch: 0, next: 2, early: 90});
+        await page.waitForTimeout(1200);
+        await shot(page, '28-curve-tahara-entry.png');
+        await teleport(page, {pos: 2150, speed: 150, notch: 0, next: 2, early: 80});
+        await page.waitForTimeout(1200);
+        await shot(page, '29-curve-tahara-inside.png');
         await teleport(page, {pos: 21500 - 120, speed: 36, notch: -2, next: 4, early: 20});
         await page.waitForTimeout(1500);
         await shot(page, '13-tahara-airport-approach.png');
+        // 信町空港駅に止まっているところへ、後ろから追い越して着陸してくる飛行機
+        await teleport(page, {pos: 21500, speed: 0, notch: -8, next: 4, early: 60});
+        await page.evaluate(() => {
+            T.local('景色', '飛行機の有無').value = 0;
+            T.local('景色', '飛行機_最初の着陸済').value = 0;
+        });
+        await page.waitForFunction(() => Number(T.local('景色', '飛行機の有無').value) === 1 &&
+            Number(T.local('景色', '飛行機の前後').value) - Number(T.get('位置')) > 380, null, {timeout: 30000});
+        await shot(page, '16-airport-landing.png');
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
+    }
+    if (!fpsOnly) {
+        const file = path.join(BUILD, 'game.html');
+        // アクシデント（起きる場所と種類を決めて起こし、障害物などの近くへ移って撮る）
+        for (const [route, shots] of [
+            [1, [['踏切の車', 9000, '30-accident-crossing.png', -40, 20], ['信号故障', 20000, '33-accident-signal.png', -160, 60]]],
+            [2, [['倒木', 3000, '31-accident-tree.png', -70, 35], ['大雨', 11000, '32-accident-rain.png', 400, 115]]],
+            [3, [['強風', 5000, '34-accident-wind.png', 400, 150]]],
+        ]) {
+            const {page, errors} = await openGame(browser, file);
+            await startRoute(page, route);
+            await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+            for (const [kind, trigger, name, rel, speed] of shots) {
+                await page.evaluate(([kind, trigger]) => {
+                    T.local('アクシデント', '予定の位置').value = [trigger];
+                    T.local('アクシデント', '予定の種類').value = [kind];
+                }, [kind, trigger]);
+                const next = await page.evaluate(p => T.get('駅の位置').map(Number).findIndex((x, i) => x > p + 50 && T.get('駅の種別')[i] === '停車') + 1, trigger);
+                await teleport(page, {pos: trigger - 30, speed: 120, notch: 0, next, early: 300});
+                await page.waitForFunction(() => T.local('アクシデント', '種類').value !== '', null, {timeout: 20000});
+                const base = await page.evaluate(() => Number(T.local('アクシデント', '止まる所').value) > 0
+                    ? Number(T.local('アクシデント', '止まる所').value) : Number(T.local('アクシデント', '規制の始め').value));
+                await teleport(page, {pos: base + rel, speed, notch: 0, next, early: 300});
+                await page.waitForTimeout(1300);
+                await shot(page, name);
+            }
+            console.log('  page errors:', errors.length ? errors : 'なし');
+            await page.close();
+        }
     }
     for (const compiler of [true, false]) {
         const r = await measureFps(browser, compiler);

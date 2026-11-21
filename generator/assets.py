@@ -1,5 +1,6 @@
 """コスチューム（SVG）と効果音（WAV）を作る。
 
+発車メロディ（Clarinet_Express 様の作曲、generator/sounds/melodies/）のほかは、
 すべてプログラムで描いた・合成したオリジナル素材。
 3D の中に置く物（標識・駅名標・木・建物など）は「20ピクセル＝1メートル」で描き、
 回転中心を根元（下の中央）にしてある。改造で絵を足すときも同じ決まりで描くと
@@ -7,6 +8,7 @@
 """
 import io
 import math
+import os
 import random as _random
 import wave
 from xml.sax.saxutils import escape
@@ -220,6 +222,8 @@ def scenery(name):
         return world(name, 1.2, 2.6, f)
     if name.startswith('店_'):
         return shop(*next(sh for sh in SHOPS if sh[0] == name[2:]))
+    if name.startswith(('空港_', '駐機_', '飛行機_', '飛行機前_')):
+        return airport_object(name)
     raise KeyError(name)
 
 
@@ -300,11 +304,269 @@ def shop(name, style, wall, sign, ink):
     return world(f'店_{name}', wm, hm, f)
 
 
+# ---------------------------------------------------------------------------
+# 信町空港（空港の建物・飛行機）。航空会社は架空。20px = 1m、回転中心は根元
+# ---------------------------------------------------------------------------
+# 航空会社: (会社名, 英語名, 胴体の帯の色, 帯の2色目, 尾翼の色, 尾翼の印の色)
+AIRLINES = [
+    ('信町航空', 'SHINMACHI AIR', BLUE, ORANGE, BLUE, ORANGE),
+    ('そらいろ航空', 'SORAIRO AIRWAYS', '#3fa9f5', '#ffffff', '#3fa9f5', '#ffffff'),
+]
+
+
+def _airline(name):
+    return next(a for a in AIRLINES if a[0] == name)
+
+
+def airport_object(name):
+    if name == '空港_ターミナル':
+        def f(w, h):
+            defs = ''
+            b = rect(0, h * .22, w, h * .78, '#d9dde2')
+            b += f'<path d="M 0 {h * .24:.0f} Q {w / 2:.0f} {h * .02:.0f} {w} {h * .24:.0f} Z" fill="#eef1f4"/>'
+            b += rect(0, h * .22, w, h * .04, '#9aa3ad')
+            # ガラスの壁
+            b += rect(w * .03, h * .3, w * .94, h * .48, '#4d7fa6')
+            for i in range(1, 24):
+                x = w * (.03 + .94 * i / 24)
+                b += line(x, h * .3, x, h * .78, '#c8d3dc', 2)
+            b += line(w * .03, h * .54, w * .97, h * .54, '#c8d3dc', 2.5)
+            b += rect(w * .03, h * .3, w * .94, h * .1, '#ffffff', extra='opacity="0.18"')
+            # 入口と柱
+            b += rect(w * .44, h * .62, w * .12, h * .38, '#2b3a48')
+            b += rect(0, h * .78, w, h * .22, '#b8bec5')
+            for i in range(9):
+                b += rect(w * (.05 + i * .113), h * .78, w * .012, h * .22, '#8d949c')
+            # 看板（ここを書き換えると空港の名前が変わる）
+            b += rect(w * .3, h * .05, w * .4, h * .15, BLUE, rx=6)
+            b += text(w * .43, h * .155, '信町空港', h * .1, '#ffffff', extra='letter-spacing="8"')
+            b += text(w * .62, h * .15, 'SHINMACHI AIRPORT', h * .045, '#ffe2b0')
+            # 搭乗橋（ボーディングブリッジ）
+            for x0 in (.12, .72):
+                b += rect(w * x0, h * .56, w * .14, h * .1, '#c3c9cf') + rect(w * (x0 + .13), h * .56, w * .02, h * .44, '#8d949c')
+            return defs + b
+        return world(name, 64, 18, f)
+    if name == '空港_管制塔':
+        def f(w, h):
+            b = poly([(w * .36, h), (w * .64, h), (w * .58, h * .3), (w * .42, h * .3)], '#d3d7dc')
+            b += rect(w * .45, h * .3, w * .1, h * .7, '#bfc5cb')
+            b += poly([(w * .12, h * .2), (w * .88, h * .2), (w * .74, h * .3), (w * .26, h * .3)], '#c9ced3')
+            b += poly([(w * .06, h * .1), (w * .94, h * .1), (w * .88, h * .2), (w * .12, h * .2)], '#26445e')
+            b += line(w * .06, h * .1, w * .94, h * .1, '#e9edf0', 6)
+            b += rect(w * .2, h * .05, w * .6, h * .05, '#e9edf0')
+            b += line(w * .5, h * .05, w * .5, 0, '#8d949c', 4) + circle(w * .5, 6, 5, '#ff3b30')
+            b += text(w * .5, h * .27, '信町空港', h * .022, '#1e3f7a')
+            return b
+        return world(name, 14, 46, f)
+    if name == '空港_格納庫':
+        def f(w, h):
+            b = f'<path d="M 0 {h} V {h * .4:.0f} Q {w / 2:.0f} {-h * .15:.0f} {w} {h * .4:.0f} V {h} Z" fill="#c4cad0"/>'
+            for i in range(1, 8):
+                x = w * i / 8
+                b += line(x, h * .32, x, h, '#a7aeb5', 3)
+            b += rect(w * .08, h * .45, w * .84, h * .55, '#9aa3ad')
+            for i in range(1, 6):
+                b += line(w * (.08 + .84 * i / 6), h * .45, w * (.08 + .84 * i / 6), h, '#7d868f', 3)
+            b += text(w / 2, h * .34, 'SHINMACHI AIR', h * .11, BLUE, extra='letter-spacing="3"')
+            return b
+        return world(name, 44, 20, f)
+    if name == '空港_吹き流し':
+        def f(w, h):
+            b = rect(w * .1, h * .1, w * .07, h * .9, '#d0d4d8')
+            for i in range(5):
+                y0, y1 = h * (.1 + i * .012), h * (.3 - i * .012)
+                x0, x1 = w * (.17 + i * .16), w * (.33 + i * .16)
+                b += poly([(x0, y0), (x1, y0 + h * .01), (x1, y1 - h * .01), (x0, y1)], '#ff6a1a' if i % 2 == 0 else '#ffffff')
+            return b
+        return world(name, 3, 8, f)
+    if name == '空港_看板':
+        def f(w, h):
+            b = rect(w * .1, h * .5, w * .05, h * .5, '#8d949c') + rect(w * .85, h * .5, w * .05, h * .5, '#8d949c')
+            b += rect(0, 0, w, h * .6, BLUE, rx=6) + rect(0, h * .52, w, h * .08, ORANGE)
+            # 飛行機のマーク
+            cx, cy, s = w * .16, h * .28, h * .2
+            b += poly([(cx - s, cy + s * .1), (cx + s, cy - s * .1), (cx + s * 1.1, cy), (cx + s, cy + s * .1),
+                       (cx - s, cy + s * .25)], '#ffffff')
+            b += poly([(cx - s * .1, cy), (cx + s * .3, cy - s * .8), (cx + s * .5, cy - s * .8), (cx + s * .35, cy)], '#ffffff')
+            b += poly([(cx - s * .1, cy + s * .2), (cx + s * .25, cy + s * .9), (cx + s * .45, cy + s * .9), (cx + s * .3, cy + s * .2)],
+                      '#ffffff')
+            b += text(w * .6, h * .3, '信町空港', h * .2, '#ffffff', extra='letter-spacing="4"')
+            b += text(w * .6, h * .45, 'Shinmachi Airport  →', h * .09, '#ffe2b0')
+            return b
+        return world(name, 12, 6, f)
+    if name.startswith('駐機_'):
+        _, en, c1, c2, fin, mark = _airline(name[3:])
+        company = name[3:]
+
+        def f(w, h):
+            # 横から見た大型の旅客機（機首が左）。胴体の長さ 56m・高さ 17m
+            fy, fh = h * .48, h * .3          # 胴体の上の端・太さ
+            b = poly([(w * .78, fy + fh * .1), (w * .9, h * .02), (w * .98, h * .02), (w * .97, fy + fh * .5)], fin)
+            b += circle(w * .93, h * .18, h * .07, mark)
+            b += f'<path d="M {w * .1:.0f} {fy:.0f} H {w * .86:.0f} L {w * .99:.0f} {fy + fh * .35:.0f} L {w * .86:.0f} {fy + fh:.0f} H {w * .1:.0f} Q {w * .005:.0f} {fy + fh * .75:.0f} {w * .01:.0f} {fy + fh * .5:.0f} Q {w * .03:.0f} {fy:.0f} {w * .1:.0f} {fy:.0f} Z" fill="#f4f6f8"/>'
+            b += rect(w * .06, fy + fh * .62, w * .82, fh * .12, c1) + rect(w * .06, fy + fh * .74, w * .82, fh * .06, c2)
+            for i in range(34):
+                b += rect(w * (.13 + i * .021), fy + fh * .3, w * .008, fh * .16, '#33475a', rx=1)
+            b += poly([(w * .03, fy + fh * .32), (w * .07, fy + fh * .22), (w * .09, fy + fh * .22), (w * .08, fy + fh * .38)], '#22323f')
+            b += text(w * .45, fy + fh * .26, company, fh * .2, c1 if c1 != '#ffffff' else '#3fa9f5')
+            # 主翼・エンジン・脚
+            b += poly([(w * .36, fy + fh * .8), (w * .6, fy + fh * .8), (w * .5, fy + fh * 1.05)], '#aeb6bf')
+            b += rect(w * .36, fy + fh * .95, w * .1, fh * .4, '#d0d6dc', rx=fh * .18)
+            b += rect(w * .44, fy + fh * 1.0, w * .025, fh * .3, '#3a3f46')
+            for x in (.16, .5):
+                b += rect(w * x, fy + fh, w * .008, h - fy - fh - h * .04, '#555')
+                b += circle(w * x + w * .004, h - h * .04, h * .04, '#222')
+            b += text(w * .65, fy + fh * .55, en, fh * .12, '#7d868f')
+            return b
+        return world(name, 56, 17, f)
+    if name.startswith(('飛行機_', '飛行機前_')):
+        front = name.startswith('飛行機前_')
+        _, en, c1, c2, fin, mark = _airline(name.split('_', 1)[1])
+
+        def f(w, h):
+            # 後ろ（飛行機_）または前（飛行機前_）から見た大型の旅客機。翼幅 60m・高さ 17m。回転中心は車輪の下。
+            # 遠くでも見えるように、胴体・翼・エンジンは本物より太めに描いている
+            cx = w / 2
+            fy = h * .6           # 胴体の中心の高さ（SVG の y）
+            r = h * .23
+            dark = '#2b3440'
+            b = poly([(cx - w * .03, fy - r * .5), (cx + w * .03, fy - r * .5), (cx + w * .016, h * .01), (cx - w * .016, h * .01)], fin,
+                     extra=f'stroke="{dark}" stroke-width="5"')
+            b += circle(cx, h * .2, w * .014, mark)
+            b += poly([(cx - w * .19, fy - r * .75), (cx + w * .19, fy - r * .75), (cx + w * .18, fy - r * .45), (cx - w * .18, fy - r * .45)],
+                      '#b9c2cb', extra=f'stroke="{dark}" stroke-width="5"')
+            # 主翼（付け根が厚く、先が薄いくさび形）
+            b += poly([(cx - w * .495, fy - r * .1), (cx + w * .495, fy - r * .1), (cx + w * .495, fy + r * .12), (cx + r, fy + r * .65),
+                       (cx - r, fy + r * .65), (cx - w * .495, fy + r * .12)], '#a9b3bd', extra=f'stroke="{dark}" stroke-width="6"')
+            b += rect(0, fy - r * .15, w * .015, r * .3, '#ff3b30') + rect(w * .985, fy - r * .15, w * .015, r * .3, '#2ecc71')
+            for sx in (-1, 1):
+                ex = cx + sx * w * .19
+                b += circle(ex, fy + r * .75, r * .62, '#e3e8ec', extra=f'stroke="{dark}" stroke-width="5"')
+                b += circle(ex, fy + r * .75, r * .4, '#3a3f46')
+                b += rect(cx + sx * w * .08 - w * .007, fy + r * .5, w * .014, h - fy - r * .5 - h * .07, '#555')
+                b += circle(cx + sx * w * .08, h - h * .05, h * .05, '#222')
+            b += circle(cx, fy, r, '#f4f6f8', extra=f'stroke="{dark}" stroke-width="6"')
+            b += f'<path d="M {cx - r:.1f} {fy + r * .3:.1f} A {r:.1f} {r:.1f} 0 0 0 {cx + r:.1f} {fy + r * .3:.1f}" fill="none" stroke="{c1}" stroke-width="{r * .3:.1f}"/>'
+            b += rect(cx - w * .005, fy + r, w * .01, h - fy - r - h * .07, '#555') + circle(cx, h - h * .05, h * .05, '#222')
+            if front:
+                # 操縦席の窓と着陸灯（こちらへ向かってくる飛行機）
+                b += f'<path d="M {cx - r * .75:.1f} {fy - r * .4:.1f} Q {cx:.1f} {fy - r * .75:.1f} {cx + r * .75:.1f} {fy - r * .4:.1f} L {cx + r * .65:.1f} {fy - r * .18:.1f} Q {cx:.1f} {fy - r * .42:.1f} {cx - r * .65:.1f} {fy - r * .18:.1f} Z" fill="#1c2a36"/>'
+                for sx in (-1, 1):
+                    b += circle(cx + sx * w * .1, fy + r * .25, r * .3, '#fff8d0')
+                    b += circle(cx + sx * w * .1, fy + r * .25, r * .8, '#fff8d0', extra='opacity="0.35"')
+            else:
+                b += circle(cx, fy, r * .35, '#d0d6dc')
+            return b
+        return world(name, 60, 17, f)
+    raise KeyError(name)
+
+
+AIRPORT_NAMES = ['空港_ターミナル', '空港_管制塔', '空港_格納庫', '空港_吹き流し', '空港_看板'] + \
+    [f'駐機_{a[0]}' for a in AIRLINES]
+
+
+# ---------------------------------------------------------------------------
+# アクシデント（障害物・踏切・特殊信号発光機・信号機）。20px = 1m、回転中心は根元
+# ---------------------------------------------------------------------------
+def accident_object(name):
+    if name == '障害_倒木':
+        def f(w, h):
+            b = poly([(w * .02, h * .78), (w * .96, h * .5), (w * .98, h * .66), (w * .04, h * .96)], '#6b4a2f')
+            b += poly([(w * .02, h * .78), (w * .96, h * .5), (w * .96, h * .55), (w * .03, h * .83)], '#8a6340')
+            for cx, cy, r in [(.72, .38, .2), (.86, .3, .16), (.6, .5, .14), (.93, .5, .12), (.8, .55, .13)]:
+                b += circle(w * cx, h * cy, h * r * 1.6, '#2f5a34')
+                b += circle(w * cx - h * .05, h * cy - h * .05, h * r, '#3f7243')
+            b += circle(w * .05, h * .87, h * .1, '#d8b98a') + circle(w * .05, h * .87, h * .05, '#a07a4a')
+            return b
+        return world(name, 7, 2.4, f)
+    if name == '障害_落石':
+        def f(w, h):
+            b = ''
+            for cx, cy, rx, ry, col in [(.3, .7, .26, .3, '#7c7a76'), (.62, .62, .3, .38, '#8d8a84'), (.82, .8, .16, .2, '#6e6c68'),
+                                        (.12, .85, .12, .15, '#77746f'), (.48, .86, .14, .14, '#9a968f')]:
+                b += f'<ellipse cx="{w * cx:.0f}" cy="{h * cy:.0f}" rx="{w * rx:.0f}" ry="{h * ry:.0f}" fill="{col}" stroke="#4a4844" stroke-width="2"/>'
+            return b
+        return world(name, 5, 1.8, f)
+    if name == '障害_シカ':
+        def f(w, h):
+            c = '#9a6a3c'
+            b = f'<ellipse cx="{w * .45:.0f}" cy="{h * .45:.0f}" rx="{w * .3:.0f}" ry="{h * .14:.0f}" fill="{c}"/>'
+            for x in (.22, .3, .58, .66):
+                b += rect(w * x, h * .5, w * .045, h * .5, '#7a5230')
+            b += poly([(w * .7, h * .42), (w * .78, h * .14), (w * .86, h * .16), (w * .8, h * .45)], c)
+            b += f'<ellipse cx="{w * .86:.0f}" cy="{h * .16:.0f}" rx="{w * .09:.0f}" ry="{h * .06:.0f}" fill="{c}"/>'
+            b += line(w * .82, h * .1, w * .76, 2, '#5a3d22', 3) + line(w * .86, h * .1, w * .92, 2, '#5a3d22', 3)
+            b += circle(w * .9, h * .15, 2.5, '#111')
+            for x, y in [(.3, .4), (.42, .38), (.54, .42), (.36, .48)]:
+                b += circle(w * x, h * y, 3, '#f2e6d0')
+            b += f'<ellipse cx="{w * .16:.0f}" cy="{h * .4:.0f}" rx="{w * .04:.0f}" ry="{h * .05:.0f}" fill="#f2e6d0"/>'
+            return b
+        return world(name, 2.2, 1.9, f)
+    if name == '障害_車':
+        def f(w, h):
+            b = f'<path d="M {w * .02:.0f} {h * .82:.0f} V {h * .5:.0f} Q {w * .04:.0f} {h * .42:.0f} {w * .14:.0f} {h * .4:.0f} L {w * .3:.0f} {h * .08:.0f} H {w * .7:.0f} L {w * .84:.0f} {h * .4:.0f} Q {w * .97:.0f} {h * .44:.0f} {w * .98:.0f} {h * .55:.0f} V {h * .82:.0f} Z" fill="#d64545"/>'
+            b += poly([(w * .33, h * .14), (w * .48, h * .14), (w * .48, h * .38), (w * .25, h * .38)], '#9fc4d8')
+            b += poly([(w * .52, h * .14), (w * .67, h * .14), (w * .78, h * .38), (w * .52, h * .38)], '#9fc4d8')
+            b += rect(w * .03, h * .55, w * .06, h * .08, '#ffe9a0') + rect(w * .91, h * .55, w * .06, h * .08, '#ff4a4a')
+            for x in (.22, .78):
+                b += circle(w * x, h * .82, h * .17, '#222') + circle(w * x, h * .82, h * .08, '#999')
+            return b
+        return world(name, 4.4, 1.6, f)
+    if name.startswith('踏切_'):
+        lit = name.endswith('1')
+
+        def f(w, h):
+            b = rect(w * .44, h * .1, w * .12, h * .9, '#eee')
+            for i in range(6):
+                b += rect(w * .44, h * (.55 + i * .07), w * .12, h * .035, '#222')
+            b += line(w * .1, h * .02, w * .9, h * .2, '#f2c200', 9) + line(w * .1, h * .2, w * .9, h * .02, '#f2c200', 9)
+            b += line(w * .1, h * .02, w * .9, h * .2, '#222', 3) + line(w * .1, h * .2, w * .9, h * .02, '#222', 3)
+            b += rect(w * .08, h * .28, w * .84, h * .09, '#222', rx=4)
+            b += circle(w * .25, h * .325, h * .035, '#ff3030' if lit else '#4a1010')
+            b += circle(w * .75, h * .325, h * .035, '#4a1010' if lit else '#ff3030')
+            b += text(w / 2, h * .47, '踏切', h * .045, '#222')
+            return b
+        return world(name, 1.6, 4.2, f)
+    if name.startswith('特発_'):
+        lit = name.endswith('点灯')
+
+        def f(w, h):
+            b = rect(w * .45, h * .25, w * .1, h * .75, '#9a9a9a')
+            b += rect(0, h * .05, w, h * .22, '#1b1b1b', rx=4)
+            for i in range(5):
+                b += circle(w * (.12 + i * .19), h * .16, w * .075, '#ff2a2a' if lit else '#3a1010')
+                if lit:
+                    b += circle(w * (.12 + i * .19), h * .16, w * .13, '#ff2a2a', extra='opacity="0.35"')
+            return b
+        return world(name, 3.2, 4.8, f)
+    if name.startswith('信号_'):
+        aspect = name[3:]
+
+        def f(w, h):
+            b = rect(w * .44, h * .3, w * .12, h * .7, '#8a8a8a')
+            b += rect(w * .12, 0, w * .76, h * .34, '#111', rx=6)
+            for i, (col, on) in enumerate([('#ff2a2a', aspect == '赤'), ('#ffb020', False), ('#2ee06a', aspect == '青')]):
+                cy = h * (.06 + i * .1)
+                b += circle(w / 2, cy, w * .22, col if on else '#2a2a2a')
+                if on:
+                    b += circle(w / 2, cy, w * .34, col, extra='opacity="0.3"')
+            return b
+        return world(name, 1.2, 6, f)
+    raise KeyError(name)
+
+
+ACCIDENT_NAMES = ['障害_倒木', '障害_落石', '障害_シカ', '障害_車', '踏切_1', '踏切_2', '特発_点灯', '特発_消灯', '信号_赤', '信号_青']
+AIRPORT_HALF_WIDTH = {'空港_ターミナル': 32, '空港_管制塔': 7, '空港_格納庫': 22, '空港_吹き流し': 1.5, '空港_看板': 6}
+AIRPORT_HALF_WIDTH.update({f'駐機_{a[0]}': 28 for a in AIRLINES})
+PLANE_NAMES = [f'飛行機_{a[0]}' for a in AIRLINES] + [f'飛行機前_{a[0]}' for a in AIRLINES]
+
+
 SCENERY_NAMES = ['松', '杉', '広葉樹', '紅葉', '家', 'ビル1', 'ビル2', 'ビル3', '電柱', '鳥居', '灯籠'] + \
-    [f'店_{sh[0]}' for sh in SHOPS]
+    [f'店_{sh[0]}' for sh in SHOPS] + AIRPORT_NAMES
 SCENERY_HALF_WIDTH = {'松': 3, '杉': 2.3, '広葉樹': 3.5, '紅葉': 3, '家': 4.5, 'ビル1': 7, 'ビル2': 9, 'ビル3': 5,
                       '電柱': 0.8, '鳥居': 3.5, '灯籠': 0.6}
 SCENERY_HALF_WIDTH.update({f'店_{sh[0]}': SHOP_SIZE[sh[1]][0] / 2 for sh in SHOPS})
+SCENERY_HALF_WIDTH.update(AIRPORT_HALF_WIDTH)
 
 
 def limit_sign(v):
@@ -519,19 +781,26 @@ def title_screen():
     b += text(240, 52, '信町高速鉄道', 18, '#cfe3ff', extra='letter-spacing="6"')
     b += text(240, 104, '3D運転士', 48, '#ffffff', extra='stroke="#1e5aa8" stroke-width="2" paint-order="stroke"')
     b += text(240, 132, '〜 最高350km/h の T25000系で３つの路線を走ろう 〜', 13, '#ffe2b0')
+    b += text(240, 152, '発車メロディ: Clarinet_Express 様（信町高速鉄道のために制作、許可を得て使用）', 8.5, '#cfd8e3',
+              weight='normal')
     b += rect(120, 318, 240, 22, '#000000', rx=11, extra='opacity="0.5"')
-    b += text(240, 334, 'Enter キーかクリックでスタート', 12, '#ffffff')
+    b += text(240, 334, 'Enter キーかタップでスタート', 12, '#ffffff')
     b += text(240, 354, '※ 音が出ないときは、画面を一度クリックしてください', 9, '#cfd8e3', weight='normal')
     return svg(480, 360, b, defs)
 
 
-def panel(title, hint):
+def panel(title, hint, button=False):
     b = rect(0, 0, 480, 360, '#000', extra='opacity="0.55"')
     b += rect(20, 40, 440, 296, '#0e1a30', rx=12, extra='opacity="0.95" stroke="#3fa9f5" stroke-width="1.5"')
     b += f'<path d="M 32 40 H 448 Q 460 40 460 52 V 76 H 20 V 52 Q 20 40 32 40 Z" fill="{BLUE}"/>'
     b += rect(20, 76, 440, 3, ORANGE)
     b += text(240, 66, title, 18, '#ffffff', extra='letter-spacing="2"')
-    b += text(240, 326, hint, 11.5, '#cfe3ff', weight='normal')
+    if button:
+        # タップしやすいように、ボタンの形にしておく（どこをタップしても進む）
+        b += rect(110, 311, 260, 22, BLUE, rx=11, extra='stroke="#cfe3ff" stroke-width="1.5"')
+        b += text(240, 326, hint, 11.5, '#ffffff')
+    else:
+        b += text(240, 326, hint, 11.5, '#cfe3ff', weight='normal')
     return svg(480, 360, b)
 
 
@@ -539,6 +808,46 @@ def icon(label, color):
     b = rect(1, 1, 46, 46, color, rx=9, extra='stroke="#fff" stroke-width="2"')
     b += text(24, 30, label, 13 if len(label) <= 2 else 10, '#fff')
     return svg(48, 48, b), 24, 24
+
+
+# ---------------------------------------------------------------------------
+# タップ操作のボタン（運転台の計器盤と同じ色づかい。運転の景色が少し透けて見える）
+# ---------------------------------------------------------------------------
+TAP_BUTTON = 52     # ボタンの大きさ（ステージのピクセル）
+# 役割: (大きい記号, 小さい文字, 色)
+TAP_BUTTONS = {
+    '力行': ('▲', '力行', '#3fb6ff'),
+    'ブレーキ': ('▼', 'ブレーキ', '#ff9f1a'),
+    '非常': ('EB', '非常', '#ff3b30'),
+    '警笛': ('♪', '警笛', '#ffd34d'),
+}
+
+
+def tap_button(role):
+    big, small, col = TAP_BUTTONS[role]
+    s = TAP_BUTTON
+    b = rect(1, 1, s - 2, s - 2, '#14181e', rx=9, extra='opacity="0.78" stroke="#4a5566" stroke-width="1.5"')
+    if role == '非常':
+        # 非常ブレーキは赤いきのこ形のボタン
+        b += circle(s / 2, s / 2 - 2, 19, '#5a0a0a') + circle(s / 2, s / 2 - 3, 16.5, col)
+        b += f'<ellipse cx="{s / 2}" cy="{s / 2 - 9}" rx="10" ry="4.5" fill="#ffffff" opacity="0.28"/>'
+        b += text(s / 2, s / 2 + 2, big, 13, '#ffffff')
+        b += text(s / 2, s - 4, small, 8, '#ffd0cc')
+    else:
+        b += rect(6, 6, s - 12, s - 12, '#232a35', rx=6, extra=f'stroke="{col}" stroke-width="1.6"')
+        b += rect(8, 8, s - 16, 4, '#ffffff', rx=2, extra='opacity="0.10"')
+        b += text(s / 2, s / 2 + 3, big, 18, col)
+        b += text(s / 2, s - 11, small, 8 if len(small) > 2 else 9, '#dfe7f1')
+    return svg(s, s, b), s / 2, s / 2
+
+
+def menu_button(n):
+    """路線・車両を選ぶ画面の番号ボタン（リストの番号と同じ数字）。"""
+    w, h = 56, 42
+    b = rect(1, 1, w - 2, h - 2, BLUE, rx=9, extra='stroke="#cfe3ff" stroke-width="2"')
+    b += rect(4, h - 9, w - 8, 3, ORANGE, rx=1.5)
+    b += text(w / 2, h / 2 + 8, str(n), 22, '#ffffff')
+    return svg(w, h, b), w / 2, h / 2
 
 
 # ---------------------------------------------------------------------------
@@ -630,19 +939,6 @@ def snd_door_chime():
     return _wav(out)
 
 
-def snd_departure_melody():
-    notes = [(659, .25), (784, .25), (880, .25), (1047, .5), (880, .25), (784, .25), (659, .25), (587, .25),
-             (659, .25), (784, .5), (0, .1), (1047, .25), (988, .25), (1047, .9)]
-    out = np.zeros(int(RATE * 5.0))
-    at = 0.0
-    for f, d in notes:
-        if f:
-            tone = _bell(f, d + 0.6, 3.5) * 0.35 + _bell(f / 2, d + 0.6, 4) * 0.12
-            _place(out, tone, at)
-        at += d
-    return _wav(out)
-
-
 def snd_ats_bell():
     t = _t(1.0)
     strike = 0.5 + 0.5 * np.sign(np.sin(2 * np.pi * 24 * t))
@@ -731,10 +1027,49 @@ def snd_select():
     return _wav(np.sin(2 * np.pi * f * t) * _env(len(t), 0.005, 0.05) * 0.35)
 
 
+def snd_alarm():
+    """アクシデントの警報（運転台のブザー。2 つの高さを交互に）。"""
+    out = np.zeros(int(RATE * 1.7))
+    for k in range(6):
+        f = 960 if k % 2 == 0 else 760
+        t = _t(0.24)
+        tone = np.sign(np.sin(2 * np.pi * f * t)) * 0.5 + np.sin(2 * np.pi * f * 2 * t) * 0.2
+        _place(out, _lowpass(tone, 3500) * _env(len(t), 0.01, 0.04), k * 0.27)
+    return _wav(out)
+
+
+def snd_impact():
+    """障害物に当たったときの「ゴトン」という鈍い音（こわくない程度）。"""
+    out = np.zeros(int(RATE * 1.0))
+    t = _t(0.5)
+    _place(out, np.sin(2 * np.pi * 70 * t) * np.exp(-9 * t), 0)
+    _place(out, _lowpass(_noise(len(t), 41), 600) * np.exp(-12 * t) * 1.5, 0)
+    _place(out, np.sin(2 * np.pi * 55 * t) * np.exp(-10 * t) * 0.6, 0.18)
+    return _wav(out)
+
+
+def snd_squeal():
+    """カーブで車輪がきしむ「キーー」という音（くり返して鳴らせるように、終わりと始めをなめらかにつないである）。"""
+    dur = 2.15
+    t = _t(dur)
+    rnd = np.random.default_rng(31)
+    x = np.zeros_like(t)
+    for f, a in ((2850, 1.0), (3420, 0.5), (4180, 0.28), (5650, 0.15)):
+        vib = 1 + 0.006 * np.sin(2 * np.pi * (5.5 + f / 2000) * t + rnd.uniform(0, 6))
+        ph = 2 * np.pi * f * np.cumsum(vib) / RATE
+        am = 0.6 + 0.4 * np.sin(2 * np.pi * (2.7 + f / 3000) * t + rnd.uniform(0, 6))
+        x += a * np.sin(ph) * am
+    x += 0.18 * (_noise(len(t), 33) - _lowpass(_noise(len(t), 33), 2200))
+    fade = int(RATE * 0.15)
+    x[:fade] = x[:fade] * np.linspace(0, 1, fade) + x[-fade:] * np.linspace(1, 0, fade)
+    x = x[:-fade]
+    return _wav(x / max(1e-6, np.abs(x).max()) * 0.5)
+
+
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
-_PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, '発車メロディ': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
+_PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8}
+         '結果': 0.9, '決定': 0.8, 'きしみ': 0.6, '警報': 0.75, '衝突': 0.9}
 
 
 def _normalized(name, fn):
@@ -750,7 +1085,6 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '警笛': lambda: snd_horn(),
     '遠くの警笛': lambda: snd_horn(volume=0.45, dur=1.6, far=True),
     'ドアチャイム': snd_door_chime,
-    '発車メロディ': snd_departure_melody,
     'ATSベル': snd_ats_bell,
     'ジョイント': snd_joint,
     'モーター': snd_motor,
@@ -762,12 +1096,46 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     'ピタ停車': lambda: snd_arpeggio([1047, 1319, 1568, 2093, 2637], 0.06, 0.9, 0.3),
     '結果': snd_fanfare,
     '決定': snd_select,
+    'きしみ': snd_squeal,
+    '警報': snd_alarm,
+    '衝突': snd_impact,
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
 SOUND_SPRITES = {
-    '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', '発車メロディ', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
-            '結果', '決定'],
+    '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
+            '結果', '決定', '警報', '衝突'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
+    'きしみ音': ['きしみ'],
 }
+
+
+# ---------------------------------------------------------------------------
+# 発車メロディ（Clarinet_Express 様の作曲。許可を得て使用している別扱いの音源）
+#   元のファイルは generator/sounds/melodies/ にある（そこの README.md を読むこと）。
+#   .sb3 に入れるときに、3 曲の大きさ（RMS）をそろえる。形式（44.1kHz ステレオ）はそのまま。
+# ---------------------------------------------------------------------------
+MELODY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sounds', 'melodies')
+MELODY_NAMES = ['CLEX202', 'CLEX203', 'CLEX204']
+MELODY_RMS_DB = -17.5     # そろえる大きさ [dBFS]。ドアチャイム（約 −13.5）より少し小さく、合成していた旧メロディ（約 −15）くらい
+MELODY_PEAK = 0.95        # 音が割れないように、いちばん大きいところはこれ以下にする
+
+
+def melody(name):
+    with wave.open(os.path.join(MELODY_DIR, f'{name}.wav')) as w:
+        ch, width, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        if width != 2:
+            raise ValueError(f'{name}.wav は 16bit の WAV にしてください')
+        x = np.frombuffer(w.readframes(n), dtype='<i2').astype(float) / 32768
+    rms = float(np.sqrt((x ** 2).mean()))
+    gain = 10 ** (MELODY_RMS_DB / 20) / max(rms, 1e-9)
+    gain = min(gain, MELODY_PEAK / max(float(np.abs(x).max()), 1e-9))
+    y = np.clip(np.round(x * gain * 32768), -32768, 32767).astype('<i2')
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as w:
+        w.setnchannels(ch)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(y.tobytes())
+    return buf.getvalue(), rate, n

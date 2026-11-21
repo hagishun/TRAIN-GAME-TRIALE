@@ -10,7 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from sb3 import Project  # noqa: E402
-from sprites import stage, data, logic, render, hud  # noqa: E402
+from sprites import stage, data, logic, render, hud, accident  # noqa: E402
 
 
 def build(path):
@@ -20,6 +20,7 @@ def build(path):
     render.build_scenery(p)
     render.build_render(p)
     render.build_opposing(p)
+    accident.build(p)
     data.build_settings(p)
     data.build_routes(p)
     data.build_cars(p)
@@ -28,6 +29,7 @@ def build(path):
     hud.build_sound(p)
     logic.build_game(p)
     hud.build_hud(p)
+    hud.build_tap(p)
 
     # 変数・リストの表示（モニター）。座標はステージ左上が (0,0)
     p.var_monitor('案内', 8, 28)
@@ -39,8 +41,8 @@ def build(path):
     p.var_monitor('制限', 166, 305)
     p.var_monitor('予告', 166, 329)
     p.var_monitor('総合評価', 40, 278)
-    p.list_monitor('路線一覧', 40, 92, 400, 196)
-    p.list_monitor('車両一覧', 40, 92, 400, 196)
+    p.list_monitor('路線一覧', 40, 92, 400, 150)   # 下に番号ボタンを並べるので少し低くしてある
+    p.list_monitor('車両一覧', 40, 92, 400, 150)
     p.list_monitor('成績', 40, 86, 400, 186)
     p.list_monitor('採点', 90, 34, 300, 196)
     pj = p.save(path)
