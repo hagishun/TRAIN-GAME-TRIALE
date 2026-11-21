@@ -1,6 +1,7 @@
 // キーボードを使わず、画面のタップ（タッチ）だけで遊べるかを Chromium で確かめる。
 //
-//   node tools/tap_check.mjs
+//   node tools/tap_check.mjs              # 田原海岸線（路線 3）で確かめる
+//   node tools/tap_check.mjs --route 4    # エアポート特快で確かめる
 //
 // 1. タイトルをタップ → 番号ボタンで路線を選ぶ → 発車を待つ
 // 2. 停車中に、ボタンの長押し（タッチしたまま）でノッチが何段動くかを測る。非常・警笛のボタンも押す
@@ -88,8 +89,9 @@ await tap(0, 0);
 await page.waitForFunction(() => T.get('場面') === '路線選択', null, {timeout: 10000});
 await page.waitForTimeout(500);
 const menuButtons = await page.evaluate(() => T.clones('番号ボタン'));
-check('路線選択に番号ボタンが出る', menuButtons === 3, `${menuButtons} 個`);
-await tap((ROUTE - 2) * 66, -95);
+const menuLength = (await get('路線一覧')).length;
+check('路線選択に番号ボタンが出る（路線一覧の数だけ）', menuButtons === menuLength, `${menuButtons} 個 / 路線一覧 ${menuLength}`);
+await tap((ROUTE - (menuButtons + 1) / 2) * 66, -95);   // ボタンは真ん中そろえで 66 ずつ並ぶ（番号ボタンスプライト）
 await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
 check('番号ボタンで路線を選べる', Number(await get('路線番号')) === ROUTE, String(await get('路線名')));
 await page.waitForTimeout(500);

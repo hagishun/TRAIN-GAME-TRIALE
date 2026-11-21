@@ -33,6 +33,7 @@ def build(path):
 
     # 変数・リストの表示（モニター）。座標はステージ左上が (0,0)
     p.var_monitor('案内', 8, 28)
+    p.var_monitor('列車', 8, 56)   # 種別と行き先（例: エアポート特快 田原京行）
     p.var_monitor('時刻', 270, 2)
     p.var_monitor('定刻', 375, 2)
     p.var_monitor('次の駅', 166, 257)

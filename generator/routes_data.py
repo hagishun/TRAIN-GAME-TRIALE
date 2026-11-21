@@ -175,6 +175,95 @@ AIRPORT_LAYOUT = [
 ]
 
 
+# 種別（列車の種類）。名前と編成両数（1両 20m。列車の長さ・停止位置目標の数字になる）。
+# 「路線データ」スプライトの「設定を読み込む」で『種別を追加』ブロックになる。
+# ほかの種別（信町特急・信町特快・快速・通快・区快・準快速は 10両、普通は 6両）も同じ形で足せる。
+TRAIN_TYPES = [
+    {'name': 'エアポート特快', 'cars': 10},
+]
+
+# 運行（路線選択に出る、種別つきの列車）。路線一覧では ROUTES のあとに並ぶ。
+#  type:       種別（TRAIN_TYPES の名前）
+#  dest:       行き先（終点の駅名）
+#  sections:   走る区間（路線名, 始めの駅, 終わりの駅）。前の区間の終わりの駅と、次の区間の始めの駅でつなぐ
+#  stops:      停車駅（ここにない駅は通過）。始発駅と終点は停車にする
+#  start_time: 始発駅の発車時刻
+#  margin:     時刻表の余裕（理想の運転の所要時間 × 倍率 ＋ 秒）
+SERVICES = [
+    {
+        'name': 'エアポート特快',
+        'type': 'エアポート特快',
+        'dest': '田原京',
+        'level': '上級',
+        'desc': 'エアポート特快 田原京行（上級・10両・信町本線→田原海岸線 直通 5駅停車/14駅・61km）',
+        'note': '新信町から信町本線を走り、高田で田原海岸線に入って信町空港・田原京へ行く空港アクセスの速達列車（10両）。\n'
+                '停車駅は 新信町・信町・高田・信町空港・田原京 だけで、ほかの 9 駅は通過する。\n'
+                '高田までは夕方の街なか、高田から先は昼の海沿い（田原海岸線の景色）になる。',
+        'sections': [('信町本線', '新信町', '高田'), ('田原海岸線', '高田', '田原京')],
+        'stops': ['新信町', '信町', '高田', '信町空港', '田原京'],
+        'start_time': '16:40:00',
+        'margin': (1.04, 4),
+    },
+]
+
+START_POS = 500     # 運行の始発駅の停止位置 [m]（路線と同じく、線路の始めから 500m）
+SCENERY_SWITCH_BEFORE = 5   # つなぐ駅の停止位置のこれ [m] 手前で、次の路線の景色に切り替える
+
+
+def train_type(name):
+    return next(t for t in TRAIN_TYPES if t['name'] == name)
+
+
+def service_route(svc):
+    """運行の区間をつないだ路線（ROUTES と同じ形）を作る。Scratch の『区間を足す』と同じ計算。"""
+    by_name = {r['name']: r for r in ROUTES}
+    out = {'name': f'{svc["type"]} {svc["dest"]}行', 'stations': [], 'limits': [], 'curves': [], 'grades': [],
+           'airports': [], 'accidents': [], 'zones': [], 'start_time': svc['start_time'], 'margin': svc['margin']}
+    seg_speeds = []
+    for k, (rname, a, b) in enumerate(svc['sections']):
+        r = by_name[rname]
+        pos = dict(r['stations'])
+        pa, pb = pos[a], pos[b]
+        first = not out['stations']
+        shift = START_POS - pa if first else out['stations'][-1][1] - pa
+        lo = -10 ** 9 if first else pa     # 最初の区間は、始発駅より手前のデータもそのまま使う
+
+        def clip(s, e):
+            s2, e2 = max(s, lo), min(e, pb)
+            return (s2 + shift, e2 + shift) if e2 > s2 else None
+
+        for n, p in r['stations']:
+            if pa <= p <= pb and (first or p != pa):
+                out['stations'].append((n, p + shift))
+        prev_limits = len(out['limits'])
+        for s, e, v in r['limits']:
+            if c := clip(s, e):
+                # 前の区間の終わりにつながる同じ速さの制限は 1 つにまとめる
+                j = next((j for j in range(prev_limits) if out['limits'][j][1] == c[0] and out['limits'][j][2] == v), None)
+                if j is None:
+                    out['limits'].append((c[0], c[1], v))
+                else:
+                    out['limits'][j] = (out['limits'][j][0], c[1], v)
+        for s, ln, rad, side in r['curves']:
+            if c := clip(s, s + ln):
+                out['curves'].append((c[0], c[1] - c[0], rad, side))
+        for s, ln, g in r['grades']:
+            if c := clip(s, s + ln):
+                out['grades'].append((c[0], c[1] - c[0], g))
+        for s, e, side in r.get('airports', []):
+            if c := clip(s, e):
+                out['airports'].append((c[0], c[1], side))
+        for kind in r.get('accidents', []):
+            if kind not in out['accidents']:
+                out['accidents'].append(kind)
+        out['zones'].append((None if first else pa + shift, rname))
+        seg_speeds.append((0 if first else pa + shift, pb + shift, r['max_speed']))
+    out['max_speed'] = max(v for _, _, v in seg_speeds)
+    out['limits'] += [(s, e, v) for s, e, v in seg_speeds if v < out['max_speed']]
+    out['passing'] = [n for n, _ in out['stations'] if n not in svc['stops']]
+    return out
+
+
 def all_station_names():
     names = []
     for r in ROUTES:

@@ -1,7 +1,8 @@
 // scratch-vm（Scratch の実行エンジン）で .sb3 を読み込み、自動運転ボットで最後まで走らせて検証する。
 //
-//   node tools/verify_vm.mjs                       # 3 路線をすべて走る
-//   node tools/verify_vm.mjs --route 2             # 路線 2 だけ
+//   node tools/verify_vm.mjs                       # 路線一覧のすべて（3 路線とエアポート特快）を走る
+//   node tools/verify_vm.mjs --route 2             # 路線 2 だけ（4 はエアポート特快）
+//   node tools/verify_vm.mjs --jobs 1              # 1 つずつ順番に走る（ふだんは CPU の数だけ並べて走る）
 //   node tools/verify_vm.mjs --route 2 --reckless  # 制限を無視して走る（ATS の確認）
 //   node tools/verify_vm.mjs --opp 100             # 対向列車の出現率を 100% にする
 //   node tools/verify_vm.mjs --style careful       # 運転のうまさ: expert（上手）/ careful（丁寧）/ sloppy（雑）
@@ -10,8 +11,11 @@
 //   node tools/verify_vm.mjs --route 3 --plan 動物@6000 --ignore-accidents   # アクシデントを無視して走る（当たったときの確認）
 //
 // 時計（Date.now）を偽物にして 1 フレーム = 1/30 秒ずつ進めるので、実時間より速く検証できる。
+// 乱数と時計は路線ごとに最初に戻すので、並べて走っても順番に走っても同じ結果になる。
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import {spawn} from 'child_process';
 import {createRequire} from 'module';
 
 const require = createRequire(import.meta.url);
@@ -21,7 +25,8 @@ const opt = (name, def) => {
     return i >= 0 ? args[i + 1] : def;
 };
 const sb3Path = opt('--file', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'train-driver-3d.sb3'));
-const routes = opt('--route', null) ? [Number(opt('--route'))] : [1, 2, 3];
+let routes = opt('--route', null) ? [Number(opt('--route'))] : null;   // null なら路線一覧のすべて
+const jobs = Number(opt('--jobs', os.availableParallelism ? os.availableParallelism() : os.cpus().length));
 const reckless = args.includes('--reckless');
 const oppRate = opt('--opp', null);
 const accidentRate = opt('--accident', null);
@@ -36,7 +41,8 @@ const STYLE = {
     careful: {aim: [-1.4, 1.0], ease: 1.3, margin: -8, plan: 3.0, every: 3},
     sloppy: {aim: [-3.5, 3.0], ease: 2.2, margin: 4, plan: 4.2, every: 5},
 }[style];
-let seed = Number(opt('--seed', 7));
+const SEED = Number(opt('--seed', 7));
+let seed = SEED;
 const rand = () => {
     seed |= 0;
     seed = seed + 0x6D2B79F5 | 0;
@@ -48,7 +54,8 @@ const rand = () => {
 Math.random = rand;
 
 // ---- 偽の時計 --------------------------------------------------------------
-let simNow = 1_700_000_000_000;
+const SIM_START = 1_700_000_000_000;
+let simNow = SIM_START;
 const realNow = Date.now.bind(Date);
 Date.now = () => {
     simNow += 0.05;
@@ -69,7 +76,9 @@ console.warn = (...a) => {
     const s = a.join(' ');
     if (!noise.test(s)) problems.push('warn: ' + s);
 };
+let muteLogs = false;   // 路線一覧の数を調べるあいだは、読み込みのログを出さない
 console.log = (...a) => {
+    if (muteLogs) return;
     const s = a.join(' ');
     if (/vm (warn|error)/.test(s) && !noise.test(s)) problems.push('log: ' + s);
     else if (!noise.test(s)) origLog(...a);
@@ -114,7 +123,7 @@ let frame = 0;
 function step(vm, n = 1) {
     for (let i = 0; i < n; i++) {
         frame++;
-        simNow = Math.max(simNow, 1_700_000_000_000 + frame * FRAME);
+        simNow = Math.max(simNow, SIM_START + frame * FRAME);
         vm.runtime._step();
     }
 }
@@ -210,6 +219,8 @@ function brakeToStop(h, v, d, per, grade, state) {
 
 async function runRoute(routeNo) {
     frame = 0;
+    seed = SEED;
+    simNow = SIM_START;
     const vm = await newVM();
     const h = helpers(vm);
     vm.greenFlag();
@@ -236,6 +247,13 @@ async function runRoute(routeNo) {
     }
     const routeName = h.get('路線名');
     const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, accidents: []};
+    // 種別つきの列車（運行）: 表示・両数・景色の切り替え・空港を確かめる
+    const zoneList = h.local('路線データ', '景色の切り替え位置');
+    log.service = {
+        type: h.get('種別名'), dest: h.get('行き先'), display: h.get('列車'), cars: h.num('編成両数'),
+        typeCars: h.num('種別の編成両数'), zones: zoneList.length, skies: [h.get('空')], airportSeen: false,
+        hasAirport: h.get('空港の開始').length > 0, platform: h.num('駅のホームの長さ'), trainLength: h.num('列車長'),
+    };
     let lastKind = '';
     let lastScene = '';
     let lastATS = 0;
@@ -320,6 +338,12 @@ async function runRoute(routeNo) {
             }
             oppWas = opp;
         }
+        const sky = h.get('空');
+        if (sky !== log.service.skies[log.service.skies.length - 1]) {
+            log.service.skies.push(sky);
+            log.events.push(`[${(frame / 30).toFixed(1)}s] 景色が切り替わった 空=${sky} 遠景=${h.get('遠景')} 位置=${h.num('位置').toFixed(0)}`);
+        }
+        if (h.num('空港の番号') > 0) log.service.airportSeen = true;
         for (const n of ['位置', '速度', 'ブレーキ率', '力行率', '時刻の秒']) {
             if (!Number.isFinite(h.num(n))) nanFrames++;
         }
@@ -329,6 +353,7 @@ async function runRoute(routeNo) {
         step(vm, 40);
     }
     log.scene = h.get('場面');
+    log.service.zoneReached = Number(h.local('路線データ', '景色の番号'));
     log.results = h.get('成績').slice();
     log.stationResults = log.results.filter(r => !r.startsWith('【アクシデント】'));
     log.planned = h.local('アクシデント', '予定の種類');
@@ -352,28 +377,102 @@ async function runRoute(routeNo) {
     return log;
 }
 
-const all = [];
-for (const r of routes) {
-    const log = await runRoute(r);
-    all.push(log);
+// 種別つきの列車（運行）の確認: 「種別 行き先行」の表示、種別の両数、ホームの長さ、景色の切り替え、空港
+function serviceProblems(l) {
+    const v = l.service;
+    const bad = [];
+    const want = v.type ? `${v.type} ${v.dest}行` : `${v.dest}行`;
+    if (v.display !== want) bad.push(`表示が「${v.display}」（「${want}」のはず）`);
+    if (v.type && v.cars !== v.typeCars) bad.push(`両数が ${v.cars}（種別は ${v.typeCars} 両）`);
+    if (v.platform < v.trainLength + 20) bad.push(`ホームの長さ ${v.platform}m が列車長 ${v.trainLength}m に足りない`);
+    if (v.zones > 0 && v.zoneReached !== v.zones) bad.push(`景色が最後の区間に切り替わっていない（${v.zoneReached}/${v.zones}）`);
+    if (v.hasAirport && !v.airportSeen) bad.push('空港のそばを通ったのに空港が出なかった');
+    return bad;
+}
+
+function report(r, log) {
     origLog(`\n=== 路線${r}: ${log.route}（${style}${reckless ? '・制限無視' : ''}） ===`);
     if (!quiet) for (const e of log.events) origLog('  ' + e);
     origLog('  成績:');
     for (const line of log.results) origLog('    ' + line);
     origLog(`  総合評価: ${log.summary}`);
     origLog(`  アクシデント: ${log.accidents.length ? log.accidents.join('・') : 'なし'}`);
+    const v = log.service;
+    origLog(`  列車: ${v.display}（${v.cars}両・ホーム ${v.platform}m）  景色: ${v.skies.join(' → ')}${v.hasAirport ? `  空港: ${v.airportSeen ? 'あり' : '出ない'}` : ''}`);
     origLog('  発車の流れ（発車時刻との差 [秒]）:');
     for (const d of log.departures) {
         origLog(`    ${d.station} ♪${d.song}  メロディ ${d.rel('melody')}  チャイム ${d.rel('chime')}  ドア閉 ${d.rel('door')}`);
     }
     origLog(`  最後の場面=${log.scene}  ゲーム内 ${log.gameSeconds.toFixed(0)} 秒 / 実時間 ${log.realSeconds.toFixed(1)} 秒` +
         `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  NaN ${log.nanFrames}`);
+    for (const p of serviceProblems(log)) origLog('  ✗ ' + p);
+}
+
+async function menuLength() {
+    muteLogs = true;
+    const vm = await newVM();
+    muteLogs = false;
+    vm.greenFlag();
+    step(vm, 20);
+    const n = helpers(vm).get('路線一覧').length;
+    vm.stopAll();
+    return n;
+}
+
+if (!routes) routes = Array.from({length: await menuLength()}, (_, i) => i + 1);
+if (!routes.length) {
+    origLog('路線一覧が空です（設定を読み込むが動いていない）。検証失敗');
+    process.exit(1);
+}
+
+// 2 つ以上の路線を走るときは、路線ごとに別のプロセスで並べて走る（結果は路線の順に出す）
+if (routes.length > 1 && jobs > 1) {
+    const self = new URL(import.meta.url).pathname;
+    const rest = [];
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--route' || args[i] === '--jobs') i++;
+        else rest.push(args[i]);
+    }
+    const outputs = {};
+    const codes = {};
+    const queue = [...routes];
+    const t0 = realNow();
+    await Promise.all(Array.from({length: Math.min(jobs, routes.length)}, async () => {
+        while (queue.length) {
+            const r = queue.shift();
+            await new Promise(resolve => {
+                const child = spawn(process.execPath, [self, ...rest, '--route', String(r), '--jobs', '1']);
+                let out = '';
+                child.stdout.on('data', d => { out += d; });
+                child.stderr.on('data', d => { out += d; });
+                child.on('close', code => {
+                    outputs[r] = out;
+                    codes[r] = code;
+                    resolve();
+                });
+            });
+        }
+    }));
+    // scratch-vm の読み込みの警告（色つきの「vm warn」）は省く
+    for (const r of routes) origLog(outputs[r].replace(/^.*No (rendering module|audio engine) present.*\n/gm, '').trimEnd());
+    const failedRoutes = routes.filter(r => codes[r] !== 0);
+    origLog(`\n${routes.length} 本を ${Math.min(jobs, routes.length)} 本ずつ並べて走った（実時間 ${((realNow() - t0) / 1000).toFixed(1)} 秒）`);
+    origLog(failedRoutes.length ? `検証失敗（路線 ${failedRoutes.join('・')}）` : 'すべて検証OK');
+    process.exit(failedRoutes.length ? 1 : 0);
+}
+
+const all = [];
+for (const r of routes) {
+    const log = await runRoute(r);
+    all.push(log);
+    report(r, log);
 }
 // 始発駅をのぞく停車駅の数だけ成績が並んでいれば OK（通過駅は採点しない）。
 // 終点をのぞく停車駅すべてで、発車メロディ → ドアチャイム → ドア閉 の順に進んでいること
 const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
     !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
-const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 || badDeparture(l));
+const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 ||
+    badDeparture(l) || serviceProblems(l).length);
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');
