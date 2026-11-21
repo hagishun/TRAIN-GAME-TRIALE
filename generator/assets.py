@@ -690,13 +690,11 @@ def title_screen():
     b += text(240, 132, '〜 最高350km/h の T25000系で３つの路線を走ろう 〜', 13, '#ffe2b0')
     b += text(240, 152, '♪ 発車メロディ: Clarinet_Express 様（信町高速鉄道のために制作・許可を得て使用）', 9, '#cfe3ff',
               weight='normal')
-    b += rect(120, 318, 240, 22, '#000000', rx=11, extra='opacity="0.5"')
-    b += text(240, 334, 'Enter キーかクリックでスタート', 12, '#ffffff')
-    b += text(240, 354, '※ 音が出ないときは、画面を一度クリックしてください', 9, '#cfd8e3', weight='normal')
+    b += text(240, 354, '※ 音が出ないときは、画面を一度タップ（クリック）してください', 9, '#cfd8e3', weight='normal')
     return svg(480, 360, b, defs)
 
 
-def panel(title, hint, credit=None):
+def panel(title, hint, credit=None, hint_y=326, lines=()):
     b = rect(0, 0, 480, 360, '#000', extra='opacity="0.55"')
     if credit:
         b += text(240, 351, credit, 8.5, '#cfe3ff', weight='normal')
@@ -704,8 +702,71 @@ def panel(title, hint, credit=None):
     b += f'<path d="M 32 40 H 448 Q 460 40 460 52 V 76 H 20 V 52 Q 20 40 32 40 Z" fill="{BLUE}"/>'
     b += rect(20, 76, 440, 3, ORANGE)
     b += text(240, 66, title, 18, '#ffffff', extra='letter-spacing="2"')
-    b += text(240, 326, hint, 11.5, '#cfe3ff', weight='normal')
+    for y, t, size, col, weight in lines:
+        b += text(240, y, t, size, col, weight=weight)
+    if hint:
+        b += text(240, hint_y, hint, 11.5, '#cfe3ff', weight='normal')
     return svg(480, 360, b)
+
+
+def credits_panel():
+    lines = [
+        (104, '信町高速鉄道 3D運転士', 15, '#ffffff', 'bold'),
+        (136, '♪ 発車メロディ', 12, '#ffd27a', 'bold'),
+        (158, 'Clarinet_Express 様', 16, '#ffffff', 'bold'),
+        (178, '信町高速鉄道のために制作していただいた曲を、許可を得て使用しています', 9.5, '#cfe3ff', 'normal'),
+        (194, '出典 https://scratch.mit.edu/projects/1440158623/', 9.5, '#cfe3ff', 'normal'),
+        (210, '曲の権利は Clarinet_Express 様にあります（曲だけをほかの作品に使わないでください）', 9, '#ffb3a8', 'normal'),
+        (240, 'そのほかの絵・効果音・プログラム', 11, '#ffd27a', 'bold'),
+        (258, 'ジェネレータで描いた・合成したオリジナル', 10, '#cfe3ff', 'normal'),
+        (280, '鉄道会社・航空会社・お店は、すべて架空のものです', 10, '#cfe3ff', 'normal'),
+    ]
+    return panel('クレジット', 'タップ・クリック・Enter でもどる', lines=lines)
+
+
+# ---------------------------------------------------------------------------
+# タッチ（クリック）用のボタン。運転台になじむ、角の丸い金属のパネルに色つきのボタン
+# ---------------------------------------------------------------------------
+BUTTON_FACES = {
+    # 名前: (幅, 高さ, 面の色, 文字の色, 大きい文字, 小さい文字)
+    '力行': (60, 42, '#2f8fd8', '#ffffff', '▲ 力行', '↑ / W'),
+    'ブレーキ': (60, 42, '#e8861a', '#ffffff', '▼ ブレーキ', '↓ / S'),
+    '非常': (60, 42, '#d42a2a', '#ffffff', '非常 EB', 'スペース'),
+    '警笛': (60, 42, '#5d6673', '#ffe14d', '警笛', 'H'),
+    'スタート': (200, 30, '#f39a1e', '#ffffff', '▶ タップ（Enter）でスタート', ''),
+    'クレジット': (78, 22, '#1e5aa8', '#ffffff', '♪ クレジット', ''),
+    'もどる': (200, 28, '#1e5aa8', '#ffffff', '◀ タイトルにもどる（Enter）', ''),
+}
+
+
+def button(name, big=None, small=None):
+    w, h, face, ink, big0, small0 = BUTTON_FACES[name]
+    big = big0 if big is None else big
+    small = small0 if small is None else small
+    b = rect(0.5, 0.5, w - 1, h - 1, '#1a1e24', rx=7, extra='stroke="#4a5566" stroke-width="1"')
+    b += rect(3, 3, w - 6, h - 7, face, rx=5)
+    b += rect(3, 3, w - 6, (h - 7) * 0.45, '#ffffff', rx=5, extra='opacity="0.18"')
+    if small:
+        ems = sum(1.0 if ord(ch) > 0x2000 else (0.3 if ch == ' ' else 0.62) for ch in big)
+        size = min(11, (w - 12) / max(1, ems))
+        b += text(w / 2, h * 0.47, big, f'{size:.1f}', ink)
+        b += text(w / 2, h * 0.8, small, 7, ink, weight='normal', extra='opacity="0.85"')
+    else:
+        b += text(w / 2, h / 2 + 4, big, min(12, h * 0.42), ink)
+    return svg(w, h, b), w / 2, h / 2
+
+
+def menu_button(number, title=None, sub=None):
+    """路線・車両を選ぶボタン（132×40）。title が無いときは番号だけの汎用ボタン。"""
+    w, h = 132, 40
+    b = rect(0.5, 0.5, w - 1, h - 1, '#1a2b48', rx=8, extra='stroke="#3fa9f5" stroke-width="1.2"')
+    b += circle(20, h / 2, 13, ORANGE) + text(20, h / 2 + 5, str(number), 14, '#ffffff')
+    if title:
+        b += text(80, 18, title, min(14, 92 / max(1, len(title)) * 1.6), '#ffffff')
+        b += text(80, 32, sub or '', 8.5, '#cfe3ff', weight='normal')
+    else:
+        b += text(80, h / 2 + 5, 'これにする', 12, '#ffffff')
+    return svg(w, h, b), w / 2, h / 2
 
 
 def icon(label, color):

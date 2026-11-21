@@ -1,6 +1,6 @@
 """運転台・計器・ランプ・画面（タイトル/メニュー）・サウンドのスプライト。"""
 import assets
-from routes_data import CARS
+from routes_data import CARS, ROUTES
 from sb3 import *
 
 
@@ -97,14 +97,118 @@ def build_hud(p):
     s.overview = ('【画面スプライト】タイトル・路線選択・車両選択・結果のパネルを出す。いちばん手前に表示される。\n'
                   'メニューの中身はリスト「路線一覧」「車両一覧」、結果はリスト「成績」と変数「総合評価」の表示。')
     s.costume_svg('タイトル', assets.title_screen(), 240, 180)
-    s.costume_svg('路線パネル', assets.panel('路線をえらぶ', '数字キーで路線を選んでください'), 240, 180)
-    s.costume_svg('車両パネル', assets.panel('車両をえらぶ', '数字キーで車両を選んでください'), 240, 180)
-    s.costume_svg('結果パネル', assets.panel('運転成績', 'Enter キーかクリックでタイトルにもどる',
+    s.costume_svg('路線パネル', assets.panel('路線をえらぶ', '下のボタンをタップ（数字キーでも選べます）', hint_y=232), 240, 180)
+    s.costume_svg('車両パネル', assets.panel('車両をえらぶ', '下のボタンをタップ（数字キーでも選べます）', hint_y=232), 240, 180)
+    s.costume_svg('結果パネル', assets.panel('運転成績', '',
                                          '♪ 発車メロディ: Clarinet_Express 様（信町高速鉄道のために制作・許可を得て使用）'), 240, 180)
+    s.costume_svg('クレジット', assets.credits_panel(), 240, 180)
     for msg, cos in [('タイトルを表示', 'タイトル'), ('路線メニューを表示', '路線パネル'), ('車両メニューを表示', '車両パネル'),
-                     ('結果を表示', '結果パネル')]:
+                     ('結果を表示', '結果パネル'), ('クレジットを表示', 'クレジット'), ('クレジットを閉じる', 'タイトル')]:
         s.script(when_recv(msg), [costume(cos), goto(0, 0), show()], comment=f'「{cos}」を出す')
     s.script(when_recv('画面を消す'), [hide()], comment='運転中は隠す')
+    s.script(Hat('event_whenthisspriteclicked'), [
+        set_('押したボタン', '画面'),
+        change('ボタンを押した回数', 1),
+    ], comment='タイトル・クレジット・結果の画面のどこかをタップ（クリック）したことを数える。\n'
+               '「マウスが押された」を見るだけだと、とても短いタップを見のがすことがあるため')
+
+
+def build_buttons(p):
+    """タップ（クリック）で操作するボタン。クローンが 1 つずつのボタンになる。"""
+    s = p.sprite('タッチボタン')
+    for name in assets.BUTTON_FACES:
+        s.costume_svg(name, *assets.button(name))
+    for i, r in enumerate(ROUTES):
+        length_km = round(r['stations'][-1][1] / 1000 - r['stations'][0][1] / 1000)
+        s.costume_svg(f'路線{i + 1}', *assets.menu_button(i + 1, r['name'], f"{r['level']}・{length_km}km"))
+    for i, c in enumerate(CARS):
+        s.costume_svg(f'車両{i + 1}', *assets.menu_button(i + 1, c['name'], f"最高{c['max_speed']}km/h"))
+    for n in range(1, 10):
+        s.costume_svg(f'番号{n}', *assets.menu_button(n))
+    s.overview = ('【タッチボタンスプライト】スマホやタブレットのタップ（パソコンではクリック）で遊ぶためのボタン。\n'
+                  'クローンを作って、1 つのクローンが 1 つのボタンになる（本体は見えない）。いちばん手前に出る。\n'
+                  '■ 押すと: 「押したボタン」にボタンの名前を入れて「ボタンを押した回数」を 1 増やす。\n'
+                  '   押しているあいだは「押しているボタン」にも名前が入る（指を離すと空になる）。\n'
+                  '   運転スプライトの『ボタン入力を読む』と、ゲーム進行スプライトのタイトル・メニュー・結果画面がこれを見る。\n'
+                  '■ 場面ごとのボタン:\n'
+                  '   タイトル: スタート・クレジット / 路線選択: 路線のボタン（路線一覧の数だけ）/ 結果: タイトルにもどる\n'
+                  '   運転中: 右に「力行」「ブレーキ」、左に「警笛」「非常」（設定の「タッチボタンを出す」を 0 にすると出ない）\n'
+                  '■ ボタンの場所は下の『ボタンを作る』の x・y で変えられる（計器や TIMS の表示に重ならない所に置いてある）。\n'
+                  '■ 路線を増やしたら: 「路線4」のコスチュームを足すと、その絵のボタンになる（無ければ番号だけのボタン）。\n'
+                  '■ キー操作（↑↓・スペース・H・Enter・数字）もそのまま使える。')
+    for n in ('役割', 'ボタンの名前', '番号', 'メニューの種類', '_i'):
+        s.var(n, '')
+    s.script(when_flag(), [
+        hide(), set_('役割', '本体'), clear_effects(), set_size(100), point(90),
+        set_('押しているボタン', ''), set_('押したボタン', ''), set_('ボタンを押した回数', 0), set_('タップした番号', 0),
+    ], comment='緑の旗: 本体は隠しておく')
+    s.proc('ボタンを作る %s 番号 %s x %s y %s', ['名前', '番号', 'x', 'y'], [
+        set_('ボタンの名前', A('名前')),
+        set_('番号', A('番号')),
+        goto(A('x'), A('y')),
+        set_('役割', 'ボタン'),
+        clone_myself().c('クローンは名前・番号・位置を受け継ぐ'),
+        set_('役割', '本体'),
+    ], comment='ボタンを 1 つ（クローンを 1 つ）作る。x・y はステージの座標（真ん中が 0, 0）')
+
+    def for_original(body):
+        return if_else(eq(V('役割'), '本体'), body, [delete_clone()])
+
+    s.script(when_recv('タイトルを表示'), [for_original([
+        call('ボタンを作る %s 番号 %s x %s y %s', 'スタート', 0, 0, -149),
+        call('ボタンを作る %s 番号 %s x %s y %s', 'クレジット', 0, 196, 162),
+    ])], comment='タイトルのボタン。前の画面のボタン（クローン）は消える')
+
+    def menu_buttons(kind, list_name):
+        return for_original([
+            set_('メニューの種類', kind),
+            set_('_i', 1),
+            repeat(length(list_name), [
+                if_(V('_i') < 7, [
+                    call('ボタンを作る %s 番号 %s x %s y %s', 'メニュー', V('_i'), -142 + (V('_i') - 1) % 3 * 142,
+                         -86 - floor((V('_i') - 1) / 3) * 46),
+                ]),
+                change('_i', 1),
+            ]).c('3 つずつ横に並べる（6 つまで）'),
+        ])
+    s.script(when_recv('路線メニューを表示'), [menu_buttons('路線', '路線一覧')], comment='路線一覧の数だけ路線のボタンを作る')
+    s.script(when_recv('車両メニューを表示'), [menu_buttons('車両', '車両一覧')], comment='車両一覧の数だけ車両のボタンを作る')
+    s.script(when_recv('運転画面を表示'), [for_original([
+        if_(eq(V('タッチボタンを出す'), 1), [
+            call('ボタンを作る %s 番号 %s x %s y %s', '力行', 0, 204, 4),
+            call('ボタンを作る %s 番号 %s x %s y %s', 'ブレーキ', 0, 204, -38),
+            call('ボタンを作る %s 番号 %s x %s y %s', '警笛', 0, -204, 4),
+            call('ボタンを作る %s 番号 %s x %s y %s', '非常', 0, -204, -38),
+        ]).c('右に力行・ブレーキ（右手の親指）、左に警笛・非常（左手の親指）。窓の下の角なので計器や TIMS には重ならない'),
+    ])], comment='運転中のボタン')
+    s.script(when_recv('結果を表示'), [for_original([
+        call('ボタンを作る %s 番号 %s x %s y %s', 'もどる', 0, 0, -140),
+    ])], comment='結果画面のボタン')
+    for msg in ('画面を消す', '運転画面を隠す'):
+        s.script(when_recv(msg), [if_(not_(eq(V('役割'), '本体')), [delete_clone()])], comment='ボタンを消す')
+    s.script(when_recv('クレジットを表示'), [if_(not_(eq(V('役割'), '本体')), [hide()])],
+             comment='クレジットを見ているあいだはボタンを隠す')
+    s.script(when_recv('クレジットを閉じる'), [if_(not_(eq(V('役割'), '本体')), [show()])], comment='クレジットを閉じたら出す')
+    s.script(when_clone(), [
+        if_else(eq(V('ボタンの名前'), 'メニュー'), [
+            costume(join('番号', V('番号'))),
+            costume(join(V('メニューの種類'), V('番号'))).c('「路線1」のようなコスチュームがあればその絵、無ければ番号だけの絵'),
+        ], [costume(V('ボタンの名前'))]),
+        clear_effects(),
+        show(),
+    ], comment='クローン（ボタン）を出す')
+    s.script(Hat('event_whenthisspriteclicked'), [
+        if_(eq(V('役割'), 'ボタン'), [
+            set_('押したボタン', V('ボタンの名前')),
+            set_('タップした番号', V('番号')),
+            change('ボタンを押した回数', 1).c('回数で数えるので、とても短いタップでも見のがさない'),
+            set_('押しているボタン', V('ボタンの名前')),
+            set_effect('BRIGHTNESS', -30).c('押しているあいだは暗くする'),
+            wait_until(not_(mouse_down())),
+            if_(eq(V('押しているボタン'), V('ボタンの名前')), [set_('押しているボタン', '')]),
+            set_effect('BRIGHTNESS', 0),
+        ]),
+    ], comment='タップ（クリック）されたとき。指を離すまで「押しているボタン」に名前が入る')
 
 
 def build_sound(p):
