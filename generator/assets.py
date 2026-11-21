@@ -742,9 +742,7 @@ def lamp(label, lit, color):
 
 def title_screen():
     defs = ('<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d1630"/>'
-            '<stop offset="0.6" stop-color="#2b2a5c"/><stop offset="1" stop-color="#d9735c"/></linearGradient>'
-            '<linearGradient id="body" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#aeb7c2"/>'
-            '<stop offset="0.5" stop-color="#eef2f6"/><stop offset="1" stop-color="#aeb7c2"/></linearGradient>')
+            '<stop offset="0.6" stop-color="#2b2a5c"/><stop offset="1" stop-color="#d9735c"/></linearGradient>')
     b = rect(0, 0, 480, 360, 'url(#bg)')
     rnd = _random.Random(7)
     x = 0
@@ -762,10 +760,12 @@ def title_screen():
         y = 252 + i * i * 0.55
         b += rect(0, y, 480, 1 + i * 0.25, '#3a3440')
     b += poly([(240, 250), (232, 360), (212, 360)], '#b8b8c0') + poly([(240, 250), (268, 360), (248, 360)], '#b8b8c0')
-    # T25000系の正面（流線形の高速電車）
+    # 車体はグラデーション参照を使わず、Scratch 公式でも銀色になる単色で描く。
     cx = 240
     b += (f'<path d="M {cx - 92} 334 C {cx - 96} 268 {cx - 70} 196 {cx} 186 C {cx + 70} 196 {cx + 96} 268 {cx + 92} 334 Z" '
-          f'fill="url(#body)"/>')
+          f'fill="#c9d1da"/>')
+    b += (f'<path d="M {cx - 46} 334 C {cx - 50} 268 {cx - 37} 201 {cx} 187 '
+          f'C {cx + 37} 201 {cx + 50} 268 {cx + 46} 334 Z" fill="#e1e6eb"/>')
     b += (f'<path d="M {cx - 58} 236 C {cx - 50} 206 {cx - 26} 196 {cx} 195 C {cx + 26} 196 {cx + 50} 206 {cx + 58} 236 '
           f'C {cx + 30} 228 {cx - 30} 228 {cx - 58} 236 Z" fill="#101820"/>')
     b += (f'<path d="M {cx - 92} 300 C {cx - 60} 288 {cx + 60} 288 {cx + 92} 300 L {cx + 93} 310 '
@@ -785,7 +785,7 @@ def title_screen():
               weight='normal')
     b += rect(120, 318, 240, 22, '#000000', rx=11, extra='opacity="0.5"')
     b += text(240, 334, 'Enter キーかタップでスタート', 12, '#ffffff')
-    b += text(240, 354, '※ 音が出ないときは、画面を一度クリックしてください', 9, '#cfd8e3', weight='normal')
+    b += text(240, 354, '音が出ないときはクリック、またはページを再読み込みして .sb3 を開き直す', 8, '#cfd8e3', weight='normal')
     return svg(480, 360, b, defs)
 
 
