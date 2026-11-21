@@ -373,6 +373,14 @@ async function runRoute(routeNo) {
         const planned = i === 0 ? stopTimes[0] : stopTimes[i] + dwell;
         return {...d, planned, rel: k => (d[k] - planned).toFixed(1)};
     });
+    // 停車駅ごとの発車メロディ（「発車メロディ」の表。表にない駅は「いつもの発車メロディ」）。終点もふくめる
+    const melStations = h.local('発車メロディ', '発車メロディの駅');
+    const melSongs = h.local('発車メロディ', '発車メロディの曲');
+    const defaultSong = h.local('発車メロディ', 'いつもの発車メロディ');
+    log.stopSongs = h.get('駅名').filter((_, i) => kinds[i] === '停車').map(name => {
+        const k = melStations.indexOf(name);
+        return {station: name, song: k >= 0 ? melSongs[k] : defaultSong};
+    });
     vm.stopAll();
     return log;
 }
@@ -387,6 +395,22 @@ function serviceProblems(l) {
     if (v.platform < v.trainLength + 20) bad.push(`ホームの長さ ${v.platform}m が列車長 ${v.trainLength}m に足りない`);
     if (v.zones > 0 && v.zoneReached !== v.zones) bad.push(`景色が最後の区間に切り替わっていない（${v.zoneReached}/${v.zones}）`);
     if (v.hasAirport && !v.airportSeen) bad.push('空港のそばを通ったのに空港が出なかった');
+    return bad;
+}
+
+// 発車メロディの確認: となりの停車駅が同じ曲にならない（終点もふくむ）、発車のとき表どおりの曲が鳴った
+function melodyProblems(l) {
+    const bad = [];
+    l.stopSongs.forEach((s, i) => {
+        const prev = l.stopSongs[i - 1];
+        if (prev && prev.song === s.song) bad.push(`となりの停車駅 ${prev.station}・${s.station} が同じ曲（${s.song}）`);
+    });
+    l.departures.forEach((d, i) => {
+        const want = l.stopSongs[i];
+        if (want && (d.station !== want.station || d.song !== want.song)) {
+            bad.push(`${d.station} の発車で ${d.song} が鳴った（表では ${want.station} は ${want.song}）`);
+        }
+    });
     return bad;
 }
 
@@ -405,7 +429,9 @@ function report(r, log) {
     }
     origLog(`  最後の場面=${log.scene}  ゲーム内 ${log.gameSeconds.toFixed(0)} 秒 / 実時間 ${log.realSeconds.toFixed(1)} 秒` +
         `  1フレーム最大 ${log.maxFrameMs.toFixed(1)}ms  ATS警報 ${log.ats} 回・ATS非常 ${log.atsEB} 回  対向列車 ${log.opposing} 本（すれ違い完了 ${log.passes}）  NaN ${log.nanFrames}`);
+    origLog('  停車駅の発車メロディ: ' + log.stopSongs.map(s => `${s.station}♪${s.song}`).join(' → '));
     for (const p of serviceProblems(log)) origLog('  ✗ ' + p);
+    for (const p of melodyProblems(log)) origLog('  ✗ ' + p);
 }
 
 async function menuLength() {
@@ -472,7 +498,7 @@ for (const r of routes) {
 const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
     !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
 const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 ||
-    badDeparture(l) || serviceProblems(l).length);
+    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length);
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');
