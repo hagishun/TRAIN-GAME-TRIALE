@@ -235,9 +235,15 @@ def service_route(svc):
         for n, p in r['stations']:
             if pa <= p <= pb and (first or p != pa):
                 out['stations'].append((n, p + shift))
+        prev_limits = len(out['limits'])
         for s, e, v in r['limits']:
             if c := clip(s, e):
-                out['limits'].append((c[0], c[1], v))
+                # 前の区間の終わりにつながる同じ速さの制限は 1 つにまとめる
+                j = next((j for j in range(prev_limits) if out['limits'][j][1] == c[0] and out['limits'][j][2] == v), None)
+                if j is None:
+                    out['limits'].append((c[0], c[1], v))
+                else:
+                    out['limits'][j] = (out['limits'][j][0], c[1], v)
         for s, ln, rad, side in r['curves']:
             if c := clip(s, s + ln):
                 out['curves'].append((c[0], c[1] - c[0], rad, side))

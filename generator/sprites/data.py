@@ -46,7 +46,8 @@ def build_cars(p):
                   '  2) 「設定を読み込む」のスクリプトに、車両一覧に足すブロックを 1 つ増やす（メニューに出る説明）\n'
                   '  3) 「車両を読み込む」のスクリプトに「もし 車両番号 = 2 なら」を足して、新しい定義ブロックを呼ぶ\n'
                   '  車両が 2 つ以上になると、路線を選んだあとに車両を選ぶ画面が自動で出ます。\n'
-                  '  運転台の見た目は「運転台」スプライトのコスチュームで、車両名と同じ名前のものが使われます。')
+                  '  運転台の見た目は「運転台」スプライトのコスチュームで、車両名と同じ名前のものが使われます。\n'
+                  '■ 両数: 種別（エアポート特快など）を走らせるときは、路線データの『種別を追加』の両数になる。')
     s.script(when_recv('設定を読み込む'), [
         delete_all('車両一覧'),
     ] + [add('車両一覧', c['desc']).c('車両選択メニューに出る説明（この順番が車両番号）') for c in CARS],
@@ -300,18 +301,34 @@ def build_routes(p):
         .c('種別の表から両数をさがす（車両データスプライトが、編成両数をこの両数にする）'),
     ], comment='運行を始める。種別と行き先を決めて、路線のデータを空にする')
 
-    def clip_group(prefix, value_list):
+    def clip_group(prefix, value_list, count_var=None):
         start_l, end_l = f'{prefix}の開始', f'{prefix}の終了'
+        keep = [
+            replace(start_l, V('_i'), V('_a') + V('ずらし')),
+            replace(end_l, V('_i'), V('_b') + V('ずらし')),
+            change('_i', 1),
+        ]
+        if count_var:
+            # 前の区間の終わりにつながる同じ速さの制限は、1 つにまとめる（つなぐ駅で標識や予告が重ならないように）
+            keep = [
+                set_('_c', 0),
+                set_('_m', 1),
+                repeat(V(count_var), [
+                    if_(and_(eq(item(end_l, V('_m')), V('_a') + V('ずらし')), eq(item(value_list, V('_m')), item(value_list, V('_i')))),
+                        [set_('_c', V('_m'))]),
+                    change('_m', 1),
+                ]),
+                if_else(V('_c') > 0, [
+                    replace(end_l, V('_c'), V('_b') + V('ずらし')),
+                    delete_at(start_l, V('_i')), delete_at(end_l, V('_i')), delete_at(value_list, V('_i')),
+                ], keep).c('つなぐ駅で前の区間の制限と同じ速さでつながるときは、前の制限をのばす'),
+            ]
         return repeat_until(V('_i') > length(start_l), [
             set_('_a', item(start_l, V('_i'))),
             set_('_b', item(end_l, V('_i'))),
             if_(V('_a') < V('下の端'), [set_('_a', V('下の端'))]),
             if_(V('_b') > V('_終わり'), [set_('_b', V('_終わり'))]),
-            if_else(V('_b') > V('_a'), [
-                replace(start_l, V('_i'), V('_a') + V('ずらし')),
-                replace(end_l, V('_i'), V('_b') + V('ずらし')),
-                change('_i', 1),
-            ], [
+            if_else(V('_b') > V('_a'), keep, [
                 delete_at(start_l, V('_i')), delete_at(end_l, V('_i')), delete_at(value_list, V('_i')),
             ]),
         ])
@@ -353,7 +370,7 @@ def build_routes(p):
                 change('_i', 1),
             ]).c('区間の外の駅と、つなぐ駅（前の区間に入っている）は消す'),
         ]),
-        set_('_i', V('_制限0') + 1), clip_group('制限', '制限の速度'),
+        set_('_i', V('_制限0') + 1), clip_group('制限', '制限の速度', '_制限0'),
         set_('_i', V('_カーブ0') + 1), clip_group('カーブ', 'カーブの曲率'),
         set_('_i', V('_勾配0') + 1), clip_group('勾配', '勾配の値'),
         set_('_i', V('_空港0') + 1),

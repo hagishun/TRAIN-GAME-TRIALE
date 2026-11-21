@@ -38,5 +38,5 @@ jobs:
                   raise SystemExit('内容が一致しません: ' + ', '.join(different))
           print('project.json と全アセットが一致しました')
           PY
-      - name: 固定した乱数と時計で3路線を自動運転
+      - name: 固定した乱数と時計で3路線とエアポート特快を自動運転（並べて走る）
         run: node tools/verify_vm.mjs --quiet

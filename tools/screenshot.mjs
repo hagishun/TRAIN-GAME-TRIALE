@@ -3,6 +3,7 @@
 //
 //   node tools/screenshot.mjs            # docs/screenshots/*.png を作る
 //   node tools/screenshot.mjs --fps-only # フレームレートだけ測る
+//   node tools/screenshot.mjs --airport  # 路線選択とエアポート特快の写真（02・40〜45）だけ撮る
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -15,6 +16,7 @@ const SB3 = path.join(ROOT, 'train-driver-3d.sb3');
 const OUT = path.join(ROOT, 'docs', 'screenshots');
 const BUILD = path.join(ROOT, 'build');
 const fpsOnly = process.argv.includes('--fps-only');
+const airportOnly = process.argv.includes('--airport');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -164,9 +166,56 @@ async function measureFps(browser, compiler) {
         msPerFrame: r.stepMs / Math.max(1, r.steps), gl, errors};
 }
 
+// エアポート特快（信町本線 → 高田 → 田原海岸線 → 田原京、10両）
+async function shootAirportExpress(browser, file) {
+    const {page, errors} = await openGame(browser, file);
+    await page.waitForTimeout(800);
+    await pressKey(page, 'Enter');
+    await page.waitForFunction(() => T.get('場面') === '路線選択');
+    await page.waitForTimeout(800);
+    await shot(page, '02-route-select.png');
+    await pressKey(page, '4');
+    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
+    await page.waitForTimeout(2500);
+    await shot(page, '40-airport-departure.png');
+    const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    // 高田の手前（信町本線の夕方の街。10両用の長いホームと停止位置目標「10」）
+    await teleport(page, {pos: st['高田'][1] - 170, speed: 45, notch: -3, next: st['高田'][0], early: 22});
+    await page.waitForTimeout(1200);
+    await shot(page, '41-airport-before-takata.png');
+    // 高田から先（田原海岸線の昼の海沿いに切り替わる）
+    await teleport(page, {pos: st['高田'][1] + 7500, speed: 320, notch: 0, next: st['信町空港'][0], early: 70});
+    await page.waitForTimeout(1500);
+    await shot(page, '42-airport-after-takata.png');
+    // 信町空港の手前（空港のターミナル・管制塔・駐機中の飛行機）
+    await teleport(page, {pos: st['信町空港'][1] - 120, speed: 36, notch: -2, next: st['信町空港'][0], early: 20});
+    await page.waitForTimeout(1500);
+    await shot(page, '43-airport-shinmachi-airport.png');
+    // 信町空港駅に止まっているところへ、後ろから追い越して着陸してくる飛行機
+    await teleport(page, {pos: st['信町空港'][1], speed: 0, notch: -8, next: st['信町空港'][0], early: 60});
+    await page.evaluate(() => {
+        T.local('景色', '飛行機の有無').value = 0;
+        T.local('景色', '飛行機_最初の着陸済').value = 0;
+    });
+    await page.waitForFunction(() => Number(T.local('景色', '飛行機の有無').value) === 1 &&
+        Number(T.local('景色', '飛行機の前後').value) - Number(T.get('位置')) > 380, null, {timeout: 30000});
+    await shot(page, '44-airport-landing.png');
+    // 終点の田原京 → 結果画面
+    await teleport(page, {pos: st['田原京'][1] - 4.4, speed: 6.5, notch: -2, next: st['田原京'][0], early: 2});
+    await page.waitForFunction(() => T.get('場面') === '結果', null, {timeout: 30000});
+    await page.waitForTimeout(1500);
+    await shot(page, '45-airport-result.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+}
+
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
-    if (!fpsOnly) {
+    if (airportOnly) {
+        await shootAirportExpress(browser, await pack(true));
+    }
+    if (!fpsOnly && !airportOnly) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -280,7 +329,8 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly) {
+    if (!fpsOnly && !airportOnly) {
+        await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
         const file = path.join(BUILD, 'game.html');
         // アクシデント（起きる場所と種類を決めて起こし、障害物などの近くへ移って撮る）
         for (const [route, shots] of [
@@ -309,7 +359,7 @@ try {
             await page.close();
         }
     }
-    for (const compiler of [true, false]) {
+    for (const compiler of airportOnly ? [] : [true, false]) {
         const r = await measureFps(browser, compiler);
         console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);
     }

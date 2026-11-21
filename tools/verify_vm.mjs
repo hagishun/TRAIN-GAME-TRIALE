@@ -76,7 +76,9 @@ console.warn = (...a) => {
     const s = a.join(' ');
     if (!noise.test(s)) problems.push('warn: ' + s);
 };
+let muteLogs = false;   // 路線一覧の数を調べるあいだは、読み込みのログを出さない
 console.log = (...a) => {
+    if (muteLogs) return;
     const s = a.join(' ');
     if (/vm (warn|error)/.test(s) && !noise.test(s)) problems.push('log: ' + s);
     else if (!noise.test(s)) origLog(...a);
@@ -407,7 +409,9 @@ function report(r, log) {
 }
 
 async function menuLength() {
+    muteLogs = true;
     const vm = await newVM();
+    muteLogs = false;
     vm.greenFlag();
     step(vm, 20);
     const n = helpers(vm).get('路線一覧').length;
@@ -416,6 +420,10 @@ async function menuLength() {
 }
 
 if (!routes) routes = Array.from({length: await menuLength()}, (_, i) => i + 1);
+if (!routes.length) {
+    origLog('路線一覧が空です（設定を読み込むが動いていない）。検証失敗');
+    process.exit(1);
+}
 
 // 2 つ以上の路線を走るときは、路線ごとに別のプロセスで並べて走る（結果は路線の順に出す）
 if (routes.length > 1 && jobs > 1) {
@@ -445,7 +453,8 @@ if (routes.length > 1 && jobs > 1) {
             });
         }
     }));
-    for (const r of routes) origLog(outputs[r].replace(/^vm warn .*\n/gm, '').trimEnd());
+    // scratch-vm の読み込みの警告（色つきの「vm warn」）は省く
+    for (const r of routes) origLog(outputs[r].replace(/^.*No (rendering module|audio engine) present.*\n/gm, '').trimEnd());
     const failedRoutes = routes.filter(r => codes[r] !== 0);
     origLog(`\n${routes.length} 本を ${Math.min(jobs, routes.length)} 本ずつ並べて走った（実時間 ${((realNow() - t0) / 1000).toFixed(1)} 秒）`);
     origLog(failedRoutes.length ? `検証失敗（路線 ${failedRoutes.join('・')}）` : 'すべて検証OK');
