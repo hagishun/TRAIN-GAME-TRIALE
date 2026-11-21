@@ -946,6 +946,25 @@ def snd_fanfare():
     return _wav(out)
 
 
+def snd_squeal():
+    """カーブで車輪のフランジがレールにこすれる「キーーッ」という音（2 秒で切れ目なくくり返せる）。"""
+    dur = 2.0
+    t = _t(dur)
+    # 周波数は 0.5Hz の倍数にして、2 秒でちょうど波が終わるようにする（くり返してもプツッと鳴らない）
+    vib = 18 * np.sin(2 * np.pi * 3.0 * t)
+    x = np.sin(2 * np.pi * 3150 * t + vib / 3150 * 40)
+    x += 0.45 * np.sin(2 * np.pi * 4420.5 * t + 0.6 * np.sin(2 * np.pi * 2.5 * t))
+    x += 0.25 * np.sin(2 * np.pi * 2240 * t + 0.4 * np.sin(2 * np.pi * 1.5 * t))
+    x *= (0.62 + 0.38 * np.sin(2 * np.pi * 1.5 * t)) * (0.85 + 0.15 * np.sin(2 * np.pi * 7.0 * t))
+    n = len(t)
+    noise = _noise(n + 4000, 41)
+    noise = noise - _lowpass(noise, 2500)
+    fade = 4000
+    hiss = noise[:n].copy()
+    hiss[:fade] = hiss[:fade] * np.linspace(0, 1, fade) + noise[n:n + fade] * np.linspace(1, 0, fade)
+    return _wav((x * 0.32 + hiss * 0.12) * 0.8)
+
+
 def snd_jet():
     """遠くを通る旅客機の「ゴォー」という音（低いうなりと、高いキーンという音が少し下がる）。"""
     dur = 5.0
@@ -967,7 +986,7 @@ def snd_select():
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
 _PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8, '飛行機': 0.7}
+         '結果': 0.9, '決定': 0.8, '飛行機': 0.7, 'きしみ': 0.6}
 
 
 def _normalized(name, fn):
@@ -995,6 +1014,7 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '結果': snd_fanfare,
     '決定': snd_select,
     '飛行機': snd_jet,
+    'きしみ': snd_squeal,
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
@@ -1003,6 +1023,7 @@ SOUND_SPRITES = {
             '結果', '決定', '飛行機'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
+    'きしみ音': ['きしみ'],
 }
 
 

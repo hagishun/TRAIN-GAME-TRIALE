@@ -38,8 +38,18 @@ await page.evaluate(() => {
     // 出力の手前で音の大きさを測る
     const an = engine.audioContext.createAnalyser();
     an.fftSize = 2048;
+    an.smoothingTimeConstant = 0;
     engine.inputNode.connect(an);
     const buf = new Float32Array(an.fftSize);
+    const spec = new Float32Array(an.frequencyBinCount);
+    // きしみ音（約 3150Hz）のあたりの強さ [dB] を測る
+    A.band = (lo, hi) => {
+        an.getFloatFrequencyData(spec);
+        const hz = engine.audioContext.sampleRate / an.fftSize;
+        let m = -200;
+        for (let i = Math.floor(lo / hz); i <= Math.ceil(hi / hz); i++) m = Math.max(m, spec[i]);
+        return m;
+    };
     setInterval(() => {
         an.getFloatTimeDomainData(buf);
         let p = 0, sq = 0;
@@ -136,6 +146,41 @@ await page.waitForFunction(() => A.T.get('場面') === '停車中', null, {timeo
 await page.waitForFunction(() => A.T.get('場面') === '運転中', null, {timeout: 40000});
 await page.waitForTimeout(1000);
 report.soundTargetsAfterStation = await page.evaluate(() => A.T.targets());
+// カーブ（紅葉滝の先、半径 2000m の左カーブ）できしみ音が鳴るか。モーター音・走行音は 0 にして、きしみ音だけを測る
+async function squealWindow(pos, label, ms) {
+    await page.evaluate(p => {
+        A.T.set('モーター音の音量', 0);
+        A.T.set('走行音の音量', 0);
+        A.T.set('ATS状態', 0);
+        A.T.set('次の駅番号', A.T.get('駅名').length);
+        A.T.set('位置', p);
+        A.T.set('速度', 170);
+        A.T.set('ノッチ', 0);
+        A.T.set('場面', '運転中');
+        A.T.set('ドア', '閉');
+        A.T.set('現在の制限', 230);
+    }, pos);
+    await page.waitForTimeout(1000);   // 前の場所の音が消えるのを待つ
+    const samples = [];
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+        await page.waitForTimeout(100);
+        samples.push(await page.evaluate(() => {
+            const t = scaffolding.vm.runtime.targets.find(x => x.isOriginal && x.sprite.name === 'きしみ音');
+            return {vol: t.volume, band: A.band(2900, 3400), pos: Number(A.T.get('位置'))};
+        }));
+        await page.evaluate(() => A.T.set('速度', 170));
+    }
+    const on = samples.filter(x => x.vol > 1);
+    const r = {label, maxVol: Math.max(...samples.map(x => x.vol)), onRatio: on.length / samples.length,
+        bandOn: on.length ? Math.max(...on.map(x => x.band)) : null, bandMax: Math.max(...samples.map(x => x.band)),
+        from: Math.round(samples[0].pos), to: Math.round(samples[samples.length - 1].pos)};
+    console.log(`きしみ音 ${label}（${r.from}〜${r.to}m・170km/h）: 音量の最大 ${r.maxVol.toFixed(0)}、鳴っていた時間 ${(r.onRatio * 100).toFixed(0)}%、` +
+        `3.15kHz 付近の強さ 最大 ${r.bandMax.toFixed(1)}dB`);
+    return r;
+}
+report.squealCurve = await squealWindow(23920, 'カーブ（半径2000m）', 7000);
+report.squealStraight = await squealWindow(26000, '直線', 3000);
 const log = await page.evaluate(() => A.log);
 const peaks = await page.evaluate(() => A.peaks);
 const levels = await page.evaluate(() => A.levels);
