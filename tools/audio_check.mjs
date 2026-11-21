@@ -34,7 +34,7 @@ await page.waitForFunction(() => window.scaffolding && scaffolding.vm.runtime.ta
 await page.evaluate(() => {
     const vm = scaffolding.vm;
     const engine = vm.runtime.audioEngine;
-    window.A = {log: [], peaks: [], engine};
+    window.A = {log: [], peaks: [], levels: [], engine};
     // 出力の手前で音の大きさを測る
     const an = engine.audioContext.createAnalyser();
     an.fftSize = 2048;
@@ -42,9 +42,13 @@ await page.evaluate(() => {
     const buf = new Float32Array(an.fftSize);
     setInterval(() => {
         an.getFloatTimeDomainData(buf);
-        let p = 0;
-        for (const v of buf) p = Math.max(p, Math.abs(v));
+        let p = 0, sq = 0;
+        for (const v of buf) {
+            p = Math.max(p, Math.abs(v));
+            sq += v * v;
+        }
         A.peaks.push(p);
+        A.levels.push({t: performance.now(), p, rms: Math.sqrt(sq / buf.length)});
     }, 50);
     // 効果音を鳴らす呼び出しを捕まえる
     const names = {};
@@ -73,7 +77,7 @@ await page.evaluate(() => {
     window.A.T = {
         get: sv,
         set: (n, v) => { Object.values(stage.variables).find(x => x.name === n).value = v; },
-        targets: () => vm.runtime.targets.filter(t => t.sprite && ['効果音', 'モーター音', '走行音'].includes(t.sprite.name))
+        targets: () => vm.runtime.targets.filter(t => t.sprite && ['効果音', '発車メロディ', 'モーター音', '走行音', 'きしみ音'].includes(t.sprite.name))
             .map(t => ({sprite: t.sprite.name, volume: Math.round(t.volume), pitch: t.soundEffects ? Math.round(t.soundEffects.pitch) : null})),
     };
 });
@@ -134,6 +138,7 @@ await page.waitForTimeout(1000);
 report.soundTargetsAfterStation = await page.evaluate(() => A.T.targets());
 const log = await page.evaluate(() => A.log);
 const peaks = await page.evaluate(() => A.peaks);
+const levels = await page.evaluate(() => A.levels);
 await browser.close();
 
 // 結果
@@ -155,6 +160,15 @@ for (const [k, b] of Object.entries(byName)) {
 }
 console.log('走行中のサウンドスプライト:', JSON.stringify(report.soundTargetsWhileRunning));
 console.log('駅を出た後のサウンドスプライト:', JSON.stringify(report.soundTargetsAfterStation));
+// 発車メロディ: 鳴らし始めてから 8 秒間の出力を測る（モーター音・走行音は停車中なので鳴っていない）
+for (const e of log.filter(x => /^CLEX/.test(x.sound))) {
+    const w = levels.filter(l => l.t >= e.t && l.t < e.t + 8000);
+    const before = levels.filter(l => l.t >= e.t - 1500 && l.t < e.t - 200);
+    const avg = a => a.length ? a.reduce((s, l) => s + l.rms, 0) / a.length : 0;
+    const max = a => a.length ? Math.max(...a.map(l => l.p)) : 0;
+    console.log(`発車メロディ ${e.sound}（${e.sprite}・音量 ${Math.round(e.targetVolume)}）: 鳴る前 RMS ${avg(before).toFixed(4)} → ` +
+        `鳴っている 8 秒の RMS ${avg(w).toFixed(4)}・最大振幅 ${max(w).toFixed(3)}（${w.length} 回測定）`);
+}
 const loud = peaks.filter(p => p > 0.01).length;
 console.log(`出力の振幅: 最大 ${Math.max(...peaks).toFixed(3)}、音が出ていた時間の割合 ${(100 * loud / peaks.length).toFixed(0)}%（${peaks.length} 回測定）`);
 console.log('ページのエラー:', pageErrors.length ? pageErrors : 'なし');

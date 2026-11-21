@@ -12,7 +12,8 @@ const site = process.argv[2] || 'scratch';
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), '..');
 const SB3 = path.join(ROOT, 'train-driver-3d.sb3');
 const URL_ = site === 'scratch' ? 'https://scratch.mit.edu/projects/editor/' : 'https://turbowarp.org/editor';
-const DUR = {1.3: '警笛', 1.85: '遠くの警笛', 2.2: 'ドアチャイム', 5: '発車メロディ', 0.45: 'ジョイント', 3.2: 'すれ違い',
+const DUR = {1.3: '警笛', 1.85: '遠くの警笛', 2.2: 'ドアチャイム', 8.92: '発車メロディ CLEX202', 8.64: '発車メロディ CLEX203',
+    10.57: '発車メロディ CLEX204', 0.45: 'ジョイント', 3.2: 'すれ違い',
     0.7: 'ブレーキ緩め', 1.2: 'ドア', 1.56: '採点', 2.6: '結果', 0.16: '決定', 1: 'モーター/ATSベル', 1.8: '走行音/ピタ停車',
     2: '走行音', 1.5: 'モーター'};
 

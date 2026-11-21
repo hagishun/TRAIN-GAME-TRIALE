@@ -1,12 +1,18 @@
 """コスチューム（SVG）と効果音（WAV）を作る。
 
-すべてプログラムで描いた・合成したオリジナル素材。
+発車メロディ（generator/sounds/CLEX*.wav）以外は、すべてプログラムで描いた・合成したオリジナル素材。
+発車メロディは Clarinet_Express 様が信町高速鉄道のために制作した曲で、許可を得て使用している
+（出典 https://scratch.mit.edu/projects/1440158623/ ）。このリポジトリのほかの素材とは権利が別なので、
+ほかの作品に勝手に再利用しないこと。
+
 3D の中に置く物（標識・駅名標・木・建物など）は「20ピクセル＝1メートル」で描き、
 回転中心を根元（下の中央）にしてある。改造で絵を足すときも同じ決まりで描くと
 3D の中で正しい大きさになる。
 """
+import hashlib
 import io
 import math
+import os
 import random as _random
 import wave
 from xml.sax.saxutils import escape
@@ -519,14 +525,18 @@ def title_screen():
     b += text(240, 52, '信町高速鉄道', 18, '#cfe3ff', extra='letter-spacing="6"')
     b += text(240, 104, '3D運転士', 48, '#ffffff', extra='stroke="#1e5aa8" stroke-width="2" paint-order="stroke"')
     b += text(240, 132, '〜 最高350km/h の T25000系で３つの路線を走ろう 〜', 13, '#ffe2b0')
+    b += text(240, 152, '♪ 発車メロディ: Clarinet_Express 様（信町高速鉄道のために制作・許可を得て使用）', 9, '#cfe3ff',
+              weight='normal')
     b += rect(120, 318, 240, 22, '#000000', rx=11, extra='opacity="0.5"')
     b += text(240, 334, 'Enter キーかクリックでスタート', 12, '#ffffff')
     b += text(240, 354, '※ 音が出ないときは、画面を一度クリックしてください', 9, '#cfd8e3', weight='normal')
     return svg(480, 360, b, defs)
 
 
-def panel(title, hint):
+def panel(title, hint, credit=None):
     b = rect(0, 0, 480, 360, '#000', extra='opacity="0.55"')
+    if credit:
+        b += text(240, 351, credit, 8.5, '#cfe3ff', weight='normal')
     b += rect(20, 40, 440, 296, '#0e1a30', rx=12, extra='opacity="0.95" stroke="#3fa9f5" stroke-width="1.5"')
     b += f'<path d="M 32 40 H 448 Q 460 40 460 52 V 76 H 20 V 52 Q 20 40 32 40 Z" fill="{BLUE}"/>'
     b += rect(20, 76, 440, 3, ORANGE)
@@ -630,19 +640,6 @@ def snd_door_chime():
     return _wav(out)
 
 
-def snd_departure_melody():
-    notes = [(659, .25), (784, .25), (880, .25), (1047, .5), (880, .25), (784, .25), (659, .25), (587, .25),
-             (659, .25), (784, .5), (0, .1), (1047, .25), (988, .25), (1047, .9)]
-    out = np.zeros(int(RATE * 5.0))
-    at = 0.0
-    for f, d in notes:
-        if f:
-            tone = _bell(f, d + 0.6, 3.5) * 0.35 + _bell(f / 2, d + 0.6, 4) * 0.12
-            _place(out, tone, at)
-        at += d
-    return _wav(out)
-
-
 def snd_ats_bell():
     t = _t(1.0)
     strike = 0.5 + 0.5 * np.sign(np.sin(2 * np.pi * 24 * t))
@@ -732,7 +729,7 @@ def snd_select():
 
 
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
-_PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, '発車メロディ': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
+_PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
          '結果': 0.9, '決定': 0.8}
 
@@ -750,7 +747,6 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '警笛': lambda: snd_horn(),
     '遠くの警笛': lambda: snd_horn(volume=0.45, dur=1.6, far=True),
     'ドアチャイム': snd_door_chime,
-    '発車メロディ': snd_departure_melody,
     'ATSベル': snd_ats_bell,
     'ジョイント': snd_joint,
     'モーター': snd_motor,
@@ -766,8 +762,56 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
 SOUND_SPRITES = {
-    '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', '発車メロディ', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
+    '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
             '結果', '決定'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
 }
+
+
+# ---------------------------------------------------------------------------
+# 発車メロディ（Clarinet_Express 様の作品。許可を得て使用）
+# ---------------------------------------------------------------------------
+MELODY_CREDIT = ('発車メロディ: Clarinet_Express 様（信町高速鉄道のために制作、許可を得て使用。'
+                 '出典 https://scratch.mit.edu/projects/1440158623/）')
+MELODY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sounds')
+# 曲の名前（＝ Scratch の音の名前）と、受け取った原本ファイルの MD5。原本が変わっていないかをビルドのたびに確かめる
+MELODIES = {
+    'CLEX202': 'eae87d842b08f5192efb2cb1270e692b',
+    'CLEX203': '851a24f1b48fa7832281fa7c8bd50469',
+    'CLEX204': 'b978e0a237559bb66761d3088a11fe8f',
+}
+# 3 曲の大きさをそろえる目標（鳴っている部分の RMS）。合成した効果音（ドアチャイム −13dB 前後）より少し控えめにする
+MELODY_TARGET_DB = -17.5
+MELODY_MAX_PEAK = 0.95
+
+
+def _active_rms(mono, rate):
+    win = max(1, rate // 40)
+    n = len(mono) // win
+    r = np.sqrt(np.mean(mono[:n * win].reshape(n, win) ** 2, axis=1))
+    act = r[r > r.max() * 0.1]
+    return float(np.sqrt(np.mean(act ** 2)))
+
+
+def melody(name):
+    """発車メロディを読み込み、音の大きさだけそろえて WAV にする（ステレオ・44.1kHz のまま）。"""
+    path = os.path.join(MELODY_DIR, f'{name}.wav')
+    raw = open(path, 'rb').read()
+    if hashlib.md5(raw).hexdigest() != MELODIES[name]:
+        raise ValueError(f'{path} が受け取った原本と違います（MD5 が一致しない）')
+    with wave.open(io.BytesIO(raw)) as w:
+        ch, sw, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        if sw != 2:
+            raise ValueError(f'{name}: 16bit PCM の WAV だけ読み込めます')
+        x = np.frombuffer(w.readframes(n), dtype='<i2').astype(float).reshape(-1, ch) / 32768
+    gain = 10 ** (MELODY_TARGET_DB / 20) / _active_rms(x.mean(axis=1), rate)
+    gain = min(gain, MELODY_MAX_PEAK / float(np.abs(x).max()))
+    y = np.clip(x * gain, -1, 1)
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as w:
+        w.setnchannels(ch)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes((y * 32767).astype('<i2').tobytes())
+    return buf.getvalue(), rate, len(y)
