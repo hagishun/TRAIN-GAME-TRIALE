@@ -83,7 +83,7 @@ const check = (name, ok, detail = '') => {
 
 // ---- 1. タイトル → 路線選択 → 発車待ち
 await page.waitForFunction(() => T.get('場面') === 'タイトル', null, {timeout: 30000});
-await page.evaluate(() => T.set('アクシデント_起きやすさ', 0));   // 確かめる流れが毎回同じになるように
+await page.evaluate(() => { T.set('アクシデント_起きやすさ', 0); T.set('番線変更_起きやすさ', 0); });   // 確かめる流れが毎回同じになるように
 await page.waitForTimeout(800);
 await tap(0, 0);
 await page.waitForFunction(() => T.get('場面') === '路線選択', null, {timeout: 10000});

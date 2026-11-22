@@ -93,7 +93,7 @@ const press = async k => { await page.keyboard.down(k); await page.waitForTimeou
 const report = {};
 report.ctxAtLoad = await state();
 await page.waitForFunction(() => A.T.get('場面') === 'タイトル');
-await page.evaluate(() => A.T.set('アクシデント_起きやすさ', 0));   // 位置を移すので、アクシデントは起こさない
+await page.evaluate(() => { A.T.set('アクシデント_起きやすさ', 0); A.T.set('番線変更_起きやすさ', 0); });   // 位置を移すので、アクシデントは起こさない
 await press('Enter');
 await page.waitForTimeout(500);
 report.ctxAfterKeyOnly = await state();
