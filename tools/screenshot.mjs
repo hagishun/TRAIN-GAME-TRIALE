@@ -286,8 +286,8 @@ async function shootTracks(browser, file) {
     await shot(page, '75-station-track-numbers.png');
     // 2. いつもの 2番線に停車（左のドアが開く）。採点の表が消えてから撮る
     await teleport(page, {pos: st['高田'][1] - 4.4, speed: 6.5, notch: -2, next: st['高田'][0], early: 3});
-    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
-    await page.waitForTimeout(5600);
+    await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 30000});
+    await page.waitForTimeout(4900);
     await shot(page, '71-usual-track-stop.png');
     await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 60000});
     // 3. 番線変更の案内（旧信町城下町に 3番線で着く）
@@ -307,7 +307,7 @@ async function shootTracks(browser, file) {
     await shot(page, '73-track-change-turnout.png');
     // 5. いつもと違う 3番線に停車（右のドアが開く）
     await teleport(page, {pos: st[target][1] - 4.4, speed: 6.5, notch: -2, next: st[target][0], early: 3});
-    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
+    await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 30000});
     await page.waitForTimeout(900);
     await shot(page, '76-track-change-score.png');
     await page.waitForTimeout(4700);
@@ -333,7 +333,7 @@ async function shootRopes(browser, file) {
     // 3. 正しく止まる → ロープが上がる → ドアが開く（採点の表が消えてから撮る）
     await teleport(page, {pos: st['高田'][1] - 4.4, speed: 6.5, notch: -2, next: st['高田'][0], early: 3});
     await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
-    await page.waitForTimeout(1100);
+    await page.waitForFunction(() => Number(T.get('ロープの上がり具合')) > 0.45, null, {timeout: 30000});
     await shot(page, '82-ropes-rising.png');
     await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 30000});
     await page.waitForTimeout(4700);
@@ -451,7 +451,7 @@ try {
         await shot(page, '07-passing.png');
         // 停車して採点
         await teleport(page, {pos: 42300 - 4.4, speed: 6.5, notch: -2, next: 11, early: 3});
-        await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 60000});
+        await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 60000});
         await page.waitForTimeout(900);
         await shot(page, '08-station-score.png');
         // 終点 → 結果画面

@@ -140,7 +140,7 @@ async function driveToStop(maxMs, {beyond = 0, back = false} = {}) {
             stops: T.get('駅の位置'), notice: String(T.get('案内')),
         }));
         if (s.scene !== '運転中') return s.scene;
-        if (s.v < 0.05 && s.notice.startsWith('停止位置修正') && (beyond > 0 || back)) return 'fix';
+        if (s.v < 0.05 && s.notice.startsWith('停止位置修正') && beyond > 0) return 'fix';
         const d = back ? s.pos - Number(s.stops[s.idx - 1]) : Number(s.stops[s.idx - 1]) + beyond - s.pos;
         let target = s.lim - 6;
         for (let i = 0; i < s.starts.length; i++) {
@@ -157,6 +157,7 @@ async function driveToStop(maxMs, {beyond = 0, back = false} = {}) {
                 want = -Math.min(8, Math.max(1, Math.round(req / 0.675 + 0.3)));
                 if (s.v < 6 && req < 0.9) want = d > 2 ? 0 : -1;
                 if (s.v < 3 && d > 4) want = 1;
+                if (back && s.v < 2.5 && d > 1.2) want = 1;   // 後ろへは短い距離なので、ゆっくり力行しつづける
             }
         } else {
             target = Math.min(target, stopCurve);
