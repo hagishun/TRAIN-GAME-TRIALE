@@ -6,7 +6,7 @@ Scratch の「運転」スプライトと同じ物理（力行・走行抵抗・
 """
 import math
 
-from routes_data import all_grades
+from routes_data import all_grades, turnout_limits
 
 DT = 0.02
 PLAN_BRAKE = 3.4      # 計画ブレーキ [km/h/s]
@@ -90,6 +90,8 @@ def run_time(route, car, start, stop):
 def timetable(route, car):
     """[(駅名, 位置, 'hh:mm:ss' または '通過', 種別), ...] を返す。始発駅の時刻は発車時刻。"""
     factor, extra = route['margin']
+    # いつもは副本線（3番線）に着く駅では、分岐器の制限も入れる（ふだんの配線では無い）
+    route = dict(route, limits=route['limits'] + turnout_limits(route, car['cars']))
     passing = set(route.get('passing', []))
     t = hms_to_sec(route['start_time'])
     st = route['stations']

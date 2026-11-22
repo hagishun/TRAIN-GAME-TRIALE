@@ -595,6 +595,18 @@ def stop_marker(n):
     return world(f'停目{n}', 1.0, 2.0, f)
 
 
+def track_number_sign(n):
+    """番線の表示（ホームに立つ、紺の板に白い数字）。コスチューム名は「番線1」など。"""
+    def f(w, h):
+        b = rect(w * .45, h * .3, w * .1, h * .7, '#8a8f96')
+        b += rect(0, 0, w, h * .36, '#1b2f5c', rx=1.5) + rect(w * .04, h * .012, w * .92, h * .336, 'none',
+                                                                extra='stroke="#fff" stroke-width="0.6"')
+        b += text(w * .4, h * .27, str(n), h * .26, '#fff')
+        b += text(w * .8, h * .3, '番線', h * .07, '#fff')
+        return b
+    return world(f'番線{n}', 1.2, 2.8, f)
+
+
 def station_board(name, transfer=None):
     """駅名標。駅名と同じ名前のコスチュームにしておくと 3D の中のホームに立つ。"""
     def f(w, h):

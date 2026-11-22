@@ -58,6 +58,8 @@ DEFAULT_MELODY = 'CLEX202'
 #  scenery_until: (路線名, 位置m)  路線の始めからその位置までは、ほかの路線の景色（空はこの路線のまま）にする
 #  scenery_left / scenery_right: 沿線に置く物（3D描画スプライトのコスチューム名）
 #  accidents: この路線で起きるアクシデントの種類（倒木・落石・動物・踏切の車・強風・大雨・信号故障・モーター不調・非常通報）
+#  layout: 駅の配線のきまり（番線の数え方 '右' か '左', いつもの番線, 番線変更の番線）。ないときは LAYOUT_DEFAULT
+#  layout_stations: {駅名: (数え方, いつも, 変更)}  その駅だけ配線のきまりを変える
 ROUTES = [
     {
         'name': '信町本線',
@@ -218,6 +220,42 @@ START_POS = 500     # 運行の始発駅の停止位置 [m]（路線と同じく
 SCENERY_SWITCH_BEFORE = 5   # 景色が変わる場所（つなぐ駅の停止位置・『始めの景色』の終わり）のこれ [m] 手前から次の景色
 SCENERY_BLEND = 2500        # 景色が変わる場所のこれ [m] 手前から、空と遠景を少しずつ次の景色に混ぜる
 
+# 駅の配線（どの駅も 3番線まで）。運転士から見て左から
+#   3番線（副本線・待避線）／島式ホーム／2番線（自分の本線）／1番線（対向列車の本線）／ホーム
+# の「2面3線」。番線は右（1番線）から数える。いつもは 2番線に着き、番線変更のときは分岐器で 3番線に入る。
+#  island: 島式ホームの幅 [m]   len: 分岐器で線路が移る長さ [m]   gap: 分岐器の終わりからホームの端まで [m]
+#  speed:  分岐の制限速度 [km/h]
+TRACKS = {'island': 7, 'len': 120, 'gap': 15, 'speed': 45}
+PLATFORM_FRONT = 8      # ホームの前の端は停止位置のこれ [m] 先
+PLATFORM_LEN = 180      # 設定の「ホームの長さ」
+# 『配線のきまり』の初期値（番線の数え方, いつもの番線, 番線変更の番線）。路線ごとに 'layout' で変えられる。
+# 駅ごとに変えるときは 'layout_stations': {駅名: (数え方, いつも, 変更)}
+LAYOUT_DEFAULT = ('右', 2, 3)
+
+
+def siding_number(count_from):
+    """副本線（3本目の線路。いちばん左）の番線の番号。"""
+    return 1 if count_from == '左' else 3
+
+
+def station_layout(r, name):
+    return r.get('layout_stations', {}).get(name, r.get('layout', LAYOUT_DEFAULT))
+
+
+def turnout_limits(r, cars):
+    """いつもは副本線に着く停車駅の、分岐器の制限（駅の手前と先）。Scratch の『配線の表を作る』と同じ計算。"""
+    plat = max(PLATFORM_LEN, cars * 20 + 20)
+    out = []
+    for name, pos in r['stations']:
+        if name in r.get('passing', []):
+            continue
+        cf, usual, _ = station_layout(r, name)
+        if usual == siding_number(cf):
+            a = pos - plat - TRACKS['gap'] - TRACKS['len']
+            b = pos + PLATFORM_FRONT + TRACKS['gap']
+            out += [(a, a + TRACKS['len'], TRACKS['speed']), (b, b + TRACKS['len'], TRACKS['speed'])]
+    return out
+
 
 def viaduct_grades(r):
     """高架の上り坂と下り坂（『高架を追加』が足す勾配と同じ。‰ は小数 1 けたに丸める）。"""
@@ -241,7 +279,7 @@ def service_route(svc):
     """運行の区間をつないだ路線（ROUTES と同じ形）を作る。Scratch の『区間を足す』と同じ計算。"""
     by_name = {r['name']: r for r in ROUTES}
     out = {'name': f'{svc["type"]} {svc["dest"]}行', 'stations': [], 'limits': [], 'curves': [], 'grades': [],
-           'airports': [], 'accidents': [], 'zones': [], 'start_time': svc['start_time'], 'margin': svc['margin']}
+           'airports': [], 'accidents': [], 'zones': [], 'layout_stations': {}, 'start_time': svc['start_time'], 'margin': svc['margin']}
     seg_speeds = []
     for k, (rname, a, b) in enumerate(svc['sections']):
         r = by_name[rname]
@@ -258,6 +296,7 @@ def service_route(svc):
         for n, p in r['stations']:
             if pa <= p <= pb and (first or p != pa):
                 out['stations'].append((n, p + shift))
+                out['layout_stations'][n] = station_layout(r, n)
         prev_limits = len(out['limits'])
         for s, e, v in r['limits']:
             if c := clip(s, e):
