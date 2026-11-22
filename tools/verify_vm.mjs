@@ -11,6 +11,7 @@
 //   node tools/verify_vm.mjs --route 3 --plan 動物@6000 --ignore-accidents   # アクシデントを無視して走る（当たったときの確認）
 //   node tools/verify_vm.mjs --track-change        # 番線変更だけを、長い駅間のすべてで起こして走る（ほかのアクシデントは起こさない）
 //   node tools/verify_vm.mjs --track-rate 100      # 番線変更の起きやすさ [%]
+//   node tools/verify_vm.mjs --track-rate 100 --expect-track-change   # ふつうの抽選で番線変更が起きて 3番線に着くことを確かめる
 //   node tools/verify_vm.mjs --route 2 --overrun   # どの停車駅もわざと行き過ぎ → レバーサー「後」で下がって止まり直す
 //   node tools/verify_vm.mjs --no-platform-door    # ホームドア（ロープ柵）を 0 にして走る（前と同じ止まり方）
 //
@@ -38,6 +39,7 @@ const plan = opt('--plan', null);
 const ignoreAccidents = args.includes('--ignore-accidents');
 const trackChange = args.includes('--track-change');
 const trackRate = opt('--track-rate', null);
+const expectTrackChange = args.includes('--expect-track-change');
 const overrun = args.includes('--overrun');
 const noDoor = args.includes('--no-platform-door');
 // --overrun: 停止位置をこれ [m] 行き過ぎるように止める（ホームドアの許容範囲より大きく、オーバーラン限度より小さい）
@@ -574,6 +576,10 @@ function trackProblems(l) {
         if (Math.abs(a.lateral - (onSiding ? a.sidingLat : 0)) > 0.05) bad.push(`${a.station}（${a.track}番線）で電車の横の位置が ${a.lateral}`);
     }
     if (trackChange && !l.arrivals.some(a => a.track !== a.usual)) bad.push('番線変更で着いた駅がない');
+    if (expectTrackChange) {
+        if (!l.accidents.includes('番線変更')) bad.push('ふつうの抽選で番線変更が起きなかった（案内が出ない）');
+        if (!l.arrivals.some(a => a.track !== a.usual && a.track === a.siding)) bad.push('番線変更で副本線（3番線）に着いた駅がない');
+    }
     return bad;
 }
 
@@ -597,7 +603,7 @@ function turnoutProblems(l) {
         const ms = Math.max(...straight.map(p => p.maxY)), mb = Math.min(...bent.map(p => p.maxY));
         if (!(mb > ms)) bad.push(`曲がるときの揺れ（いちばん小さい ${mb}px）が、まっすぐのとき（いちばん大きい ${ms}px）より強くない`);
     }
-    if (trackChange && !bent.length) bad.push('番線変更で分岐器を曲がらなかった');
+    if ((trackChange || expectTrackChange) && !bent.length) bad.push('番線変更で分岐器を曲がらなかった');
     return bad;
 }
 
