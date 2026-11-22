@@ -4,6 +4,7 @@
 //   node tools/screenshot.mjs            # docs/screenshots/*.png を作る
 //   node tools/screenshot.mjs --fps-only # フレームレートだけ測る
 //   node tools/screenshot.mjs --airport  # 路線選択とエアポート特快の写真（02・40〜45）だけ撮る
+//   node tools/screenshot.mjs --viaduct  # 高田から先の高架の写真（50〜61）と、高架の上のフレームレートだけ
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -17,6 +18,7 @@ const OUT = path.join(ROOT, 'docs', 'screenshots');
 const BUILD = path.join(ROOT, 'build');
 const fpsOnly = process.argv.includes('--fps-only');
 const airportOnly = process.argv.includes('--airport');
+const viaductOnly = process.argv.includes('--viaduct');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -142,15 +144,20 @@ async function teleport(page, {pos, speed, notch, next, early = 30}) {
     }, {pos, speed, notch, next, early});
 }
 
-async function measureFps(browser, compiler) {
+async function measureFps(browser, compiler, viaduct = false) {
     const file = await pack(compiler);
     const {page, errors} = await openGame(browser, file);
-    await startRoute(page, 1);
+    await startRoute(page, viaduct ? 3 : 1);
     await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
     await page.evaluate(() => { T.botOn = true; });
     await page.waitForTimeout(4000);
-    // 駅の手前（ホームが見える）に移して、重い場面を測る
-    await teleport(page, {pos: 31000 - 420, speed: 150, notch: -3, next: 9});
+    if (viaduct) {
+        // 田原海岸線の高架の上（カーブ・側壁・下に見える街）を走る場面
+        await teleport(page, {pos: 1300, speed: 160, notch: 0, next: 2, early: 120});
+    } else {
+        // 駅の手前（ホームが見える）に移して、重い場面を測る
+        await teleport(page, {pos: 31000 - 420, speed: 150, notch: -3, next: 9});
+    }
     await page.evaluate(() => { T.steps = 0; T.stepMs = 0; });
     const t0 = Date.now();
     await page.waitForTimeout(8000);
@@ -162,7 +169,7 @@ async function measureFps(browser, compiler) {
         return ext ? c.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unknown';
     });
     await page.close();
-    return {mode: compiler ? 'コンパイラ（TurboWarp）' : 'インタプリタ（素の Scratch 相当）', fps: r.steps / sec,
+    return {mode: (compiler ? 'コンパイラ（TurboWarp）' : 'インタプリタ（素の Scratch 相当）') + (viaduct ? '・高架の上' : ''), fps: r.steps / sec,
         msPerFrame: r.stepMs / Math.max(1, r.steps), gl, errors};
 }
 
@@ -210,12 +217,61 @@ async function shootAirportExpress(browser, file) {
     await page.close();
 }
 
+// 高田から先の高架（エアポート特快と田原海岸線）: 上り坂 → 高架の上 → 下り坂 → 景色の変わり目の前後 → 海沿い
+async function shootViaduct(browser, file) {
+    for (const [route, prefix, first, speeds] of [
+        [4, 'airport', 50, {up: 70, top: 200, down: 200, sw: 170, sea: 220}],
+        [3, 'tahara', 56, {up: 60, top: 160, down: 120, sw: 90, sea: 50}],
+    ]) {
+        const {page, errors} = await openGame(browser, file);
+        await startRoute(page, route);
+        await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+        const info = await page.evaluate(() => {
+            const loc = n => T.local('路線データ', n).value;
+            const zones = loc('景色の切り替え位置').map(Number);
+            return {
+                start: Number(T.get('高架の開始')[0]), end: Number(T.get('高架の終了')[0]), ramp: Number(T.get('高架の坂')[0]),
+                boundary: zones[zones.length - 1] - Number(loc('景色を切り替える手前')),
+                stations: T.get('駅の位置').map(Number), kinds: T.get('駅の種別'), times: T.get('駅の時刻秒').map(Number),
+                dwell: Number(T.get('停車時間')),
+            };
+        });
+        const stopIdx = info.stations.map((_, i) => i).filter(i => info.kinds[i] === '停車');
+        // その位置まで走ってきたところを撮る（少し手前に移して、位置を過ぎるのを待つ）。
+        // 時計は、前の停車駅を発車してから平均 120km/h で走ってきたくらいにする
+        const at = async (pos, speed, notch, name) => {
+            const next = stopIdx.find(i => info.stations[i] > pos + 30);
+            const prev = [...stopIdx].reverse().find(i => info.stations[i] < pos);
+            const dep = info.times[prev] + (prev === 0 ? 0 : info.dwell);
+            const now = dep + 8 + (pos - info.stations[prev]) / (120 / 3.6);
+            await teleport(page, {pos: pos - speed / 3.6 * 1.2, speed, notch, next: next + 1, early: info.times[next] - now});
+            await page.evaluate(p => {
+                T.local('採点', '通過を調べた駅').value = T.get('駅の位置').filter(x => Number(x) < p).length;
+            }, pos);
+            await page.waitForFunction(p => Number(T.get('位置')) >= p, pos, {timeout: 20000});
+            await shot(page, name);
+        };
+        const n = k => `${first + k}-${prefix}-viaduct-${['up', 'top', 'down', 'before-switch', 'after-switch', 'seaside'][k]}.png`;
+        await at(info.start - 60, speeds.up, 3, n(0));                   // 高田を出た直後: 前の線路が上り坂
+        await at(info.start + info.ramp + 900, speeds.top, 0, n(1));     // 高架の上（カーブ）: 街が下に見え、側壁がある
+        await at(info.end - info.ramp + 20, speeds.down, 0, n(2));       // 下り坂: 前の線路が下っている
+        await at(info.boundary - 25, speeds.sw, 0, n(3));                // 景色の変わり目の手前
+        await at(info.boundary + 25, speeds.sw, 0, n(4));                // 変わり目を過ぎたところ
+        await at(info.boundary + (route === 3 ? 420 : 600), speeds.sea, route === 3 ? -2 : 0, n(5));   // 降りたあとの海沿い
+        console.log('  page errors:', errors.length ? errors : 'なし');
+        await page.close();
+    }
+}
+
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
     if (airportOnly) {
         await shootAirportExpress(browser, await pack(true));
     }
-    if (!fpsOnly && !airportOnly) {
+    if (viaductOnly) {
+        await shootViaduct(browser, await pack(true));
+    }
+    if (!fpsOnly && !airportOnly && !viaductOnly) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -329,8 +385,9 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly && !airportOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly) {
         await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
+        await shootViaduct(browser, path.join(BUILD, 'game.html'));
         const file = path.join(BUILD, 'game.html');
         // アクシデント（起きる場所と種類を決めて起こし、障害物などの近くへ移って撮る）
         for (const [route, shots] of [
@@ -360,8 +417,10 @@ try {
         }
     }
     for (const compiler of airportOnly ? [] : [true, false]) {
-        const r = await measureFps(browser, compiler);
-        console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);
+        for (const viaduct of viaductOnly ? [true] : [false, true]) {
+            const r = await measureFps(browser, compiler, viaduct);
+            console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);
+        }
     }
 } finally {
     await browser.close();

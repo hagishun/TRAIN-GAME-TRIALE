@@ -249,11 +249,21 @@ async function runRoute(routeNo) {
     const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, accidents: []};
     // 種別つきの列車（運行）: 表示・両数・景色の切り替え・空港を確かめる
     const zoneList = h.local('路線データ', '景色の切り替え位置');
+    const backdropName = () => {
+        const st = vm.runtime.getTargetForStage();
+        return st.getCostumes()[st.currentCostume].name;
+    };
     log.service = {
         type: h.get('種別名'), dest: h.get('行き先'), display: h.get('列車'), cars: h.num('編成両数'),
-        typeCars: h.num('種別の編成両数'), zones: zoneList.length, skies: [h.get('空')], airportSeen: false,
+        typeCars: h.num('種別の編成両数'), zones: zoneList.length, skies: [backdropName()], airportSeen: false,
+        // 景色の変わり目（この位置から先が次の景色）。空の背景はここを過ぎたときに変わる
+        boundaries: zoneList.slice(1).map(p => Number(p) - Number(h.local('路線データ', '景色を切り替える手前'))),
+        skyChanges: [],
         hasAirport: h.get('空港の開始').length > 0, platform: h.num('駅のホームの長さ'), trainLength: h.num('列車長'),
     };
+    // 高架: 高さ・坂の勾配の表示
+    log.viaduct = {count: h.get('高架の開始').length, maxHeight: 0, grades: new Set()};
+    let lastMix = 0;
     let lastKind = '';
     let lastScene = '';
     let lastATS = 0;
@@ -338,10 +348,17 @@ async function runRoute(routeNo) {
             }
             oppWas = opp;
         }
-        const sky = h.get('空');
+        const sky = backdropName();
         if (sky !== log.service.skies[log.service.skies.length - 1]) {
             log.service.skies.push(sky);
-            log.events.push(`[${(frame / 30).toFixed(1)}s] 景色が切り替わった 空=${sky} 遠景=${h.get('遠景')} 位置=${h.num('位置').toFixed(0)}`);
+            log.service.skyChanges.push({pos: h.num('位置'), mixBefore: lastMix});
+            log.events.push(`[${(frame / 30).toFixed(1)}s] 空の背景が変わった 空=${sky} 遠景=${h.get('遠景')} 位置=${h.num('位置').toFixed(0)}（直前の混ぜ具合 ${lastMix.toFixed(2)}）`);
+        }
+        lastMix = h.num('景色の混ぜ具合');
+        if (log.viaduct.count) {
+            const ht = h.num('今の高さ');
+            log.viaduct.maxHeight = Math.max(log.viaduct.maxHeight, ht);
+            if (ht > 0 && scene === '運転中') log.viaduct.grades.add(String(h.get('勾配')).split(' ')[0]);
         }
         if (h.num('空港の番号') > 0) log.service.airportSeen = true;
         for (const n of ['位置', '速度', 'ブレーキ率', '力行率', '時刻の秒']) {
@@ -395,6 +412,17 @@ function serviceProblems(l) {
     if (v.platform < v.trainLength + 20) bad.push(`ホームの長さ ${v.platform}m が列車長 ${v.trainLength}m に足りない`);
     if (v.zones > 0 && v.zoneReached !== v.zones) bad.push(`景色が最後の区間に切り替わっていない（${v.zoneReached}/${v.zones}）`);
     if (v.hasAirport && !v.airportSeen) bad.push('空港のそばを通ったのに空港が出なかった');
+    // 空の背景は、景色の変わり目を過ぎたところで、混ぜ終わってから変わる（急に変わらない）
+    for (const c of v.skyChanges) {
+        const b = v.boundaries.find(x => c.pos > x && c.pos < x + 60);
+        if (b === undefined) bad.push(`空の背景が変わり目でない所（${c.pos.toFixed(0)}m）で変わった（変わり目 ${v.boundaries.join('・')}m）`);
+        if (c.mixBefore < 0.9) bad.push(`空の背景が急に変わった（${c.pos.toFixed(0)}m、直前の混ぜ具合 ${c.mixBefore.toFixed(2)}）`);
+    }
+    // 高架: 高さがあり、上り坂と下り坂が TIMS の勾配に出る
+    if (l.viaduct.count) {
+        if (!(l.viaduct.maxHeight > 0)) bad.push('高架があるのに線路が高くならなかった');
+        for (const g of ['上り', '下り']) if (!l.viaduct.grades.has(g)) bad.push(`高架の坂で勾配に「${g}」が出なかった`);
+    }
     return bad;
 }
 
@@ -422,7 +450,9 @@ function report(r, log) {
     origLog(`  総合評価: ${log.summary}`);
     origLog(`  アクシデント: ${log.accidents.length ? log.accidents.join('・') : 'なし'}`);
     const v = log.service;
-    origLog(`  列車: ${v.display}（${v.cars}両・ホーム ${v.platform}m）  景色: ${v.skies.join(' → ')}${v.hasAirport ? `  空港: ${v.airportSeen ? 'あり' : '出ない'}` : ''}`);
+    origLog(`  列車: ${v.display}（${v.cars}両・ホーム ${v.platform}m）  空: ${v.skies.join(' → ')}${v.skyChanges.length ? `（${v.skyChanges.map(c => c.pos.toFixed(0) + 'm').join('・')}）` : ''}` +
+        `${v.boundaries.length ? `  景色の変わり目: ${v.boundaries.join('・')}m` : ''}${v.hasAirport ? `  空港: ${v.airportSeen ? 'あり' : '出ない'}` : ''}` +
+        `${log.viaduct.count ? `  高架: ${log.viaduct.count} か所（見た目の高さ最大 ${log.viaduct.maxHeight.toFixed(1)}m・勾配 ${[...log.viaduct.grades].join('/')}）` : ''}`);
     origLog('  発車の流れ（発車時刻との差 [秒]）:');
     for (const d of log.departures) {
         origLog(`    ${d.station} ♪${d.song}  メロディ ${d.rel('melody')}  チャイム ${d.rel('chime')}  ドア閉 ${d.rel('door')}`);
