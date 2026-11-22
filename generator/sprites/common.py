@@ -12,6 +12,11 @@ def height_at(pos):
     return item('高さ表', c) + (item('高さ表', c + 1) - item('高さ表', c)) * (pos / 10 - floor(pos / 10))
 
 
+def vis_height_at(pos):
+    """画面に描くときの線路の高さ [m]（設定の「見た目の高さの強さ」倍）。"""
+    return height_at(pos) * V('見た目の高さの強さ')
+
+
 def add_projection(s, ground=False, ground_flag=False):
     """『位置を計算』: 前方 z m・横 m・高さ m の点が画面のどこに見えるかを計算する。
 
@@ -27,7 +32,7 @@ def add_projection(s, ground=False, ground_flag=False):
     on_track = [
         if_else(eq(V('高架モード'), 1), [
             set_('_pw', V('位置') + A('z')),
-            set_('_上げ', height_at(V('_pw')) - V('今の高さ'))
+            set_('_上げ', vis_height_at(V('_pw')) - V('今の高さ'))
             .c('線路の上の物: その場所の線路の高さ − いまいる所の線路の高さ（上り坂の先は高く、下り坂の先は低く見える）'),
         ], [set_('_上げ', 0)]),
     ]
