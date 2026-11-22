@@ -6,6 +6,7 @@
 //   node tools/screenshot.mjs --airport  # 路線選択とエアポート特快の写真（02・40〜45）だけ撮る
 //   node tools/screenshot.mjs --viaduct  # 高田から先の高架の写真（50〜61）と、高架の上のフレームレートだけ
 //   node tools/screenshot.mjs --tracks   # 駅の 3番線と番線変更の写真（70〜76）だけ
+//   node tools/screenshot.mjs --ropes    # ホームドア（ロープ柵）・停止位置修正・レバーサーの後退・160km/h の標識（80〜87）だけ
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -21,6 +22,7 @@ const fpsOnly = process.argv.includes('--fps-only');
 const airportOnly = process.argv.includes('--airport');
 const viaductOnly = process.argv.includes('--viaduct');
 const tracksOnly = process.argv.includes('--tracks');
+const ropesOnly = process.argv.includes('--ropes');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -132,6 +134,7 @@ async function teleport(page, {pos, speed, notch, next, early = 30}) {
     await page.evaluate(({pos, speed, notch, next, early}) => {
         if (next !== undefined) T.set('次の駅番号', next);
         T.set('位置', pos);
+        T.set('いちばん進んだ位置', pos);   // 後ろへ移したときも、そこから後退できるように
         T.set('速度', speed);
         T.set('場面', '運転中');
         T.set('ドア', '閉');
@@ -313,10 +316,81 @@ async function shootTracks(browser, file) {
     await page.close();
 }
 
+// ホームドア（昇降式ロープ柵）とレバーサー（80〜87）。信町本線の高田（2番線）と、番線変更で 3番線に入る旧信町城下町
+async function shootRopes(browser, file) {
+    const {page, errors} = await openGame(browser, file);
+    await startRoute(page, 1);
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    // 1. 160km/h の制限標識（6200m から 160km/h）
+    await teleport(page, {pos: 6200 - 55, speed: 100, notch: 0, next: 3, early: 200});
+    await page.waitForTimeout(900);
+    await shot(page, '86-limit-sign-160.png');
+    // 2. 高田に近づく: 島式ホームの両側と右のホームに、支柱とロープの柵が並ぶ（2番線）
+    await teleport(page, {pos: st['高田'][1] - 200, speed: 40, notch: -2, next: st['高田'][0], early: 30});
+    await page.waitForTimeout(900);
+    await shot(page, '80-ropes-approach-track2.png');
+    // 3. 正しく止まる → ロープが上がる → ドアが開く（採点の表が消えてから撮る）
+    await teleport(page, {pos: st['高田'][1] - 4.4, speed: 6.5, notch: -2, next: st['高田'][0], early: 3});
+    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
+    await page.waitForTimeout(1100);
+    await shot(page, '82-ropes-rising.png');
+    await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 30000});
+    await page.waitForTimeout(4700);
+    await shot(page, '83-ropes-up.png');
+    // 4. 発車前: ドアが閉まって、ロープが下がりきったところ
+    await page.waitForFunction(() => T.get('案内') === 'ホームドアのロープが下がります', null, {timeout: 60000});
+    await page.waitForFunction(() => Number(T.get('ロープの上がり具合')) === 0, null, {timeout: 30000});
+    await shot(page, '84-ropes-down.png');
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    // 5. 二間六草を 4m 行き過ぎて止まる → ロープが上がらず「停止位置修正」
+    const s3 = st['二間六草'];
+    await teleport(page, {pos: s3[1] + 4 - 4.4, speed: 6.5, notch: -2, next: s3[0], early: 3});
+    await page.waitForFunction(() => String(T.get('案内')).startsWith('停止位置修正'), null, {timeout: 30000});
+    await page.waitForTimeout(700);
+    await shot(page, '85-stop-position-fix.png');
+    // 6. R キーを 2 回でレバーサー「後」にして、P2 で後ろへ下がる
+    await pressKey(page, 'r');
+    await page.waitForTimeout(200);
+    await pressKey(page, 'r');
+    await page.evaluate(() => { T.set('ノッチ', 2); T.set('ノッチ名', 'P2'); });
+    await page.waitForFunction(() => Number(T.get('速度')) > 4.5, null, {timeout: 30000});
+    await page.evaluate(() => { T.set('ノッチ', 0); T.set('ノッチ名', 'N'); });
+    await page.waitForTimeout(300);
+    await shot(page, '87-reverse.png');
+    // 止めて、レバーサーを「前」に戻す（止まった所で採点されたら、発車するまで待つ）
+    const target = '旧信町城下町';
+    await page.evaluate(() => { T.set('ノッチ', -8); T.set('ノッチ名', 'B8'); });
+    await page.waitForFunction(() => Number(T.get('速度')) < 0.01, null, {timeout: 30000});
+    await page.waitForTimeout(300);
+    await pressKey(page, 'f');
+    await page.waitForTimeout(200);
+    await pressKey(page, 'f');
+    if (await page.evaluate(() => T.get('場面')) === '停車中') {
+        await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 90000});
+    }
+    // 7. 番線変更で 3番線に入る旧信町城下町（右のホームの柵）
+    await page.evaluate(([p]) => {
+        T.local('アクシデント', '予定の位置').value = [p];
+        T.local('アクシデント', '予定の種類').value = ['番線変更'];
+    }, [st['中ヶ野宮'][1] - 2000]);
+    await teleport(page, {pos: st['中ヶ野宮'][1] - 2050, speed: 200, notch: 0, next: st[target][0], early: 120});
+    await page.waitForFunction(() => T.local('アクシデント', '種類').value === '番線変更', null, {timeout: 20000});
+    const t2 = await page.evaluate(i => Number(T.get('駅の分岐の始め')[i - 1]), st[target][0]);
+    await teleport(page, {pos: t2 + 150, speed: 40, notch: -1, next: st[target][0], early: 25});
+    await page.waitForTimeout(900);
+    await shot(page, '81-ropes-approach-track3.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+}
+
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
     if (tracksOnly) {
         await shootTracks(browser, await pack(true));
+    }
+    if (ropesOnly) {
+        await shootRopes(browser, await pack(true));
     }
     if (airportOnly) {
         await shootAirportExpress(browser, await pack(true));
@@ -324,7 +398,7 @@ try {
     if (viaductOnly) {
         await shootViaduct(browser, await pack(true));
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -438,8 +512,9 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly) {
         await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
+        await shootRopes(browser, path.join(BUILD, 'game.html'));
         await shootViaduct(browser, path.join(BUILD, 'game.html'));
         await shootTracks(browser, path.join(BUILD, 'game.html'));
         const file = path.join(BUILD, 'game.html');
@@ -470,7 +545,7 @@ try {
             await page.close();
         }
     }
-    for (const compiler of airportOnly || tracksOnly ? [] : [true, false]) {
+    for (const compiler of airportOnly || tracksOnly || ropesOnly ? [] : [true, false]) {
         for (const viaduct of viaductOnly ? [true] : [false, true]) {
             const r = await measureFps(browser, compiler, viaduct);
             console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);

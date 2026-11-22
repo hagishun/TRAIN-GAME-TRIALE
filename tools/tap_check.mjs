@@ -4,8 +4,9 @@
 //   node tools/tap_check.mjs --route 4    # エアポート特快で確かめる
 //
 // 1. タイトルをタップ → 番号ボタンで路線を選ぶ → 発車を待つ
-// 2. 停車中に、ボタンの長押し（タッチしたまま）でノッチが何段動くかを測る。非常・警笛のボタンも押す
-// 3. ▲力行・▼ブレーキのボタンだけで次の駅まで走り、停止位置に止めて採点されるまで
+// 2. 停車中に、ボタンの長押し（タッチしたまま）でノッチが何段動くかを測る。非常・警笛・レバーサー（前・後）のボタンも押す
+// 3. ▲力行・▼ブレーキのボタンだけで次の駅まで走り、わざと行き過ぎて止める（ホームドアのロープが上がらず「停止位置修正」）。
+//    「後」ボタンでレバーサーを「後」にして下がり、止まり直して採点されるまで。止まっているあいだに「前」ボタンで「前」に戻す
 // 4. 終点の手前に移して（ここだけテレポート）、タップで止めて結果画面 → タップでタイトルへ戻る
 // 判断のために VM の変数（速度・位置など）は読むが、操作はすべてタッチイベントで行う。
 import fs from 'fs';
@@ -73,7 +74,7 @@ async function hold(x, y, ms) {
     await touch('touchEnd', p);
     await page.waitForTimeout(150);
 }
-const BTN = {力行: [182, 32], ブレーキ: [182, -26], 警笛: [-182, 32], 非常: [-182, -26]};
+const BTN = {力行: [182, 32], ブレーキ: [182, -26], 警笛: [-182, 32], 非常: [-182, -26], レバーサー前: [158, 88], レバーサー後: [206, 88]};
 const press = role => tap(...BTN[role]);
 const report = {};
 const check = (name, ok, detail = '') => {
@@ -96,7 +97,7 @@ await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout
 check('番号ボタンで路線を選べる', Number(await get('路線番号')) === ROUTE, String(await get('路線名')));
 await page.waitForTimeout(500);
 const tapButtons = await page.evaluate(() => T.clones('タップ操作'));
-check('運転画面にタップ用ボタンが 4 つ出る', tapButtons === 4, `${tapButtons} 個`);
+check('運転画面にタップ用ボタンが 6 つ出る', tapButtons === 6, `${tapButtons} 個`);
 
 // ---- 2. 長押し・非常・警笛（停車中なので減点はない）
 let n0 = await num('ノッチ');
@@ -113,6 +114,13 @@ await page.waitForTimeout(200);
 check('警笛ボタン → 警笛が鳴る', (await page.evaluate(() => T.heard)).includes('警笛'));
 for (let i = 0; i < 1; i++) await press('力行');
 check('EB から ▲力行で B8 に戻る', await get('ノッチ名') === 'B8', await get('ノッチ名'));
+const revs = [await get('レバーサー')];
+await press('レバーサー後'); revs.push(await get('レバーサー'));
+await press('レバーサー後'); revs.push(await get('レバーサー'));
+await press('レバーサー後'); revs.push(await get('レバーサー'));
+await press('レバーサー前'); revs.push(await get('レバーサー'));
+await press('レバーサー前'); revs.push(await get('レバーサー'));
+check('レバーサーのボタン（後・前）で 1 段ずつ切り替わる', revs.join('') === '前切後後切前', revs.join(' → '));
 
 // ---- 3. タップだけで次の駅まで
 await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 60000});
@@ -122,16 +130,18 @@ const stationName = (await get('駅名'))[stopIndex - 1];
 let taps = 0;
 let shotTaken = false;
 const t0 = Date.now();
-async function driveToStop(maxMs) {
+// beyond: 停止位置をこれ [m] 行き過ぎた所に止める。back: レバーサー「後」で停止位置まで下がる
+async function driveToStop(maxMs, {beyond = 0, back = false} = {}) {
     const start = Date.now();
     while (Date.now() - start < maxMs) {
         const s = await page.evaluate(() => ({
             v: Number(T.get('速度')), pos: Number(T.get('位置')), lim: Number(T.get('現在の制限')), notch: Number(T.get('ノッチ')),
             scene: T.get('場面'), idx: Number(T.get('次の駅番号')), starts: T.get('制限の開始'), speeds: T.get('制限の速度'),
-            stops: T.get('駅の位置'),
+            stops: T.get('駅の位置'), notice: String(T.get('案内')),
         }));
         if (s.scene !== '運転中') return s.scene;
-        const d = Number(s.stops[s.idx - 1]) - s.pos;
+        if (s.v < 0.05 && s.notice.startsWith('停止位置修正') && (beyond > 0 || back)) return 'fix';
+        const d = back ? s.pos - Number(s.stops[s.idx - 1]) : Number(s.stops[s.idx - 1]) + beyond - s.pos;
         let target = s.lim - 6;
         for (let i = 0; i < s.starts.length; i++) {
             const st = Number(s.starts[i]);
@@ -141,7 +151,7 @@ async function driveToStop(maxMs) {
         const stopCurve = Math.sqrt(Math.max(0, 2 * 2.6 * 3.6 * (d - s.v / 3.6 * 1.5 - 1)));
         if (stopCurve < s.v + 3 || d < 60) {
             // 停止位置に向けてブレーキ（必要な減速度からノッチを選ぶ。止まる直前は緩める）
-            if (s.v < 0.05) want = d > 1.5 ? 2 : -8;
+            if (s.v < 0.05) want = d > 0.6 ? (back ? 1 : 2) : -8;
             else {
                 const req = s.v * s.v / (7.2 * Math.max(0.05, d - s.v / 3.6 * 0.6));
                 want = -Math.min(8, Math.max(1, Math.round(req / 0.675 + 0.3)));
@@ -162,10 +172,23 @@ async function driveToStop(maxMs) {
     }
     return 'timeout';
 }
-const scene = await driveToStop(8 * 60 * 1000);
+const fix = await driveToStop(8 * 60 * 1000, {beyond: 4});
+const fixNotice = await get('案内');
+check(`${stationName} をわざと 4m 行き過ぎる → ロープが上がらず「停止位置修正」`,
+    fix === 'fix' && Number(await get('ロープの上がり具合')) === 0 && await get('ドア') === '閉', `${fixNotice}`);
+await press('レバーサー後');
+await press('レバーサー後');
+check('「後」ボタンを 2 回 → レバーサー「後」', await get('レバーサー') === '後', await get('レバーサー'));
+const posBefore = await num('位置');
+const scene = await driveToStop(2 * 60 * 1000, {back: true});
 const results = await get('成績');
-check(`タップだけで発車から ${stationName} に停車・採点まで`, scene === '停車中' && results.length === 1,
-    `${results[0] || '採点なし'}（タップ ${taps} 回、${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);
+check(`タップだけで後ろへ下がって止まり直し、${stationName} で採点まで`, scene === '停車中' && results.length === 1,
+    `${results[0] || '採点なし'}（${(posBefore - await num('位置')).toFixed(2)}m 下がった。タップ ${taps} 回、${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);
+await page.waitForFunction(() => Number(T.get('ロープの上がり具合')) === 1 && T.get('ドア') === '開', null, {timeout: 10000}).catch(() => {});
+check('止まり直すとロープが上がってからドアが開く', Number(await get('ロープの上がり具合')) === 1 && await get('ドア') === '開');
+await press('レバーサー前');
+await press('レバーサー前');
+check('停車中に「前」ボタンを 2 回 → レバーサー「前」', await get('レバーサー') === '前', await get('レバーサー'));
 
 // ---- 4. 終点 → 結果画面 → タイトル（終点の手前に移す）
 await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 60000});

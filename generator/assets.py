@@ -749,6 +749,24 @@ def lamp(label, lit, color):
     return svg(34, 14, b), 17, 7
 
 
+REVERSER = ['前', '切', '後']
+REVERSER_COLORS = {'前': '#4cd964', '切': '#c9d3df', '後': '#c07aff'}
+
+
+def reverser_costume(pos):
+    """運転台の上の枠に出すレバーサーの表示（前・切・後の 3 つのうち、今の位置だけ光る）。"""
+    w, h, cw = 64, 14, 15
+    b = rect(0, 0, w, h, '#14171c', rx=3, extra='stroke="#4a5566" stroke-width="0.8"')
+    b += text(9, 10, 'REV', 5.5, '#8a96a6', weight='normal')
+    for i, p in enumerate(REVERSER):
+        x = 18 + i * (cw + 1)
+        if p == pos:
+            b += rect(x, 1.5, cw, h - 3, REVERSER_COLORS[p], rx=2) + text(x + cw / 2, 10.5, p, 9, '#111')
+        else:
+            b += rect(x, 1.5, cw, h - 3, '#2a2f37', rx=2) + text(x + cw / 2, 10.5, p, 9, '#5f6a78')
+    return svg(w, h, b), w / 2, h / 2
+
+
 # ---------------------------------------------------------------------------
 # タイトル・メニュー
 # ---------------------------------------------------------------------------
@@ -833,12 +851,15 @@ TAP_BUTTONS = {
     'ブレーキ': ('▼', 'ブレーキ', '#ff9f1a'),
     '非常': ('EB', '非常', '#ff3b30'),
     '警笛': ('♪', '警笛', '#ffd34d'),
+    'レバーサー前': ('前', 'レバーサー', REVERSER_COLORS['前']),
+    'レバーサー後': ('後', 'レバーサー', REVERSER_COLORS['後']),
 }
+TAP_BUTTON_SMALL = 44     # レバーサーのボタンは少し小さい（右上の、力行ボタンの上に並べる）
 
 
 def tap_button(role):
     big, small, col = TAP_BUTTONS[role]
-    s = TAP_BUTTON
+    s = TAP_BUTTON_SMALL if role.startswith('レバーサー') else TAP_BUTTON
     b = rect(1, 1, s - 2, s - 2, '#14181e', rx=9, extra='opacity="0.78" stroke="#4a5566" stroke-width="1.5"')
     if role == '非常':
         # 非常ブレーキは赤いきのこ形のボタン
@@ -849,8 +870,8 @@ def tap_button(role):
     else:
         b += rect(6, 6, s - 12, s - 12, '#232a35', rx=6, extra=f'stroke="{col}" stroke-width="1.6"')
         b += rect(8, 8, s - 16, 4, '#ffffff', rx=2, extra='opacity="0.10"')
-        b += text(s / 2, s / 2 + 3, big, 18, col)
-        b += text(s / 2, s - 11, small, 8 if len(small) > 2 else 9, '#dfe7f1')
+        b += text(s / 2, s / 2 + 3, big, 18 if s == TAP_BUTTON else 16, col)
+        b += text(s / 2, s - 11, small, (8 if len(small) > 2 else 9) if s == TAP_BUTTON else 6.5, '#dfe7f1')
     return svg(s, s, b), s / 2, s / 2
 
 
@@ -1079,10 +1100,34 @@ def snd_squeal():
     return _wav(x / max(1e-6, np.abs(x).max()) * 0.5)
 
 
+def snd_reverser():
+    """レバーサーを切り替える「ガチャッ」という音。"""
+    out = np.zeros(int(RATE * 0.4))
+    t = _t(0.06)
+    _place(out, (_noise(len(t), 51) - _lowpass(_noise(len(t), 51), 1800)) * np.exp(-60 * t), 0)
+    t = _t(0.18)
+    _place(out, np.sin(2 * np.pi * 140 * t) * np.exp(-28 * t) * 0.8, 0.03)
+    _place(out, (_noise(len(t), 52) - _lowpass(_noise(len(t), 52), 2500)) * np.exp(-45 * t) * 0.6, 0.07)
+    return _wav(out)
+
+
+def snd_platform_door():
+    """ホームドア（ロープ柵）が動くときの音: 低いモーターのうなりと「ピッ、ピッ」という知らせの音。"""
+    dur = 2.5
+    out = np.zeros(int(RATE * dur))
+    t = _t(dur)
+    hum = np.sin(2 * np.pi * 95 * t) + 0.45 * np.sin(2 * np.pi * 190 * t) + 0.2 * np.sin(2 * np.pi * 285 * t)
+    _place(out, _lowpass(hum, 900) * _env(len(t), 0.3, 0.4) * 0.35, 0)
+    for k in range(4):
+        tt = _t(0.12)
+        _place(out, np.sin(2 * np.pi * 1660 * tt) * _env(len(tt), 0.005, 0.04) * 0.3, k * 0.6)
+    return _wav(out)
+
+
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
 _PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8, 'きしみ': 0.6, '警報': 0.75, '衝突': 0.9}
+         '結果': 0.9, '決定': 0.8, 'きしみ': 0.6, '警報': 0.75, '衝突': 0.9, 'レバーサー': 0.7, 'ホームドア': 0.6}
 
 
 def _normalized(name, fn):
@@ -1112,12 +1157,14 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     'きしみ': snd_squeal,
     '警報': snd_alarm,
     '衝突': snd_impact,
+    'レバーサー': snd_reverser,
+    'ホームドア': snd_platform_door,
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
 SOUND_SPRITES = {
     '効果音': ['警笛', '遠くの警笛', 'ドアチャイム', 'ATSベル', 'すれ違い', 'ブレーキ緩め', 'ドア', '採点', 'ピタ停車',
-            '結果', '決定', '警報', '衝突'],
+            '結果', '決定', '警報', '衝突', 'レバーサー', 'ホームドア'],
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
     'きしみ音': ['きしみ'],

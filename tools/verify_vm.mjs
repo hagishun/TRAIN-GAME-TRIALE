@@ -11,6 +11,8 @@
 //   node tools/verify_vm.mjs --route 3 --plan 動物@6000 --ignore-accidents   # アクシデントを無視して走る（当たったときの確認）
 //   node tools/verify_vm.mjs --track-change        # 番線変更だけを、長い駅間のすべてで起こして走る（ほかのアクシデントは起こさない）
 //   node tools/verify_vm.mjs --track-rate 100      # 番線変更の起きやすさ [%]
+//   node tools/verify_vm.mjs --route 2 --overrun   # どの停車駅もわざと行き過ぎ → レバーサー「後」で下がって止まり直す
+//   node tools/verify_vm.mjs --no-platform-door    # ホームドア（ロープ柵）を 0 にして走る（前と同じ止まり方）
 //
 // 時計（Date.now）を偽物にして 1 フレーム = 1/30 秒ずつ進めるので、実時間より速く検証できる。
 // 乱数と時計は路線ごとに最初に戻すので、並べて走っても順番に走っても同じ結果になる。
@@ -36,6 +38,10 @@ const plan = opt('--plan', null);
 const ignoreAccidents = args.includes('--ignore-accidents');
 const trackChange = args.includes('--track-change');
 const trackRate = opt('--track-rate', null);
+const overrun = args.includes('--overrun');
+const noDoor = args.includes('--no-platform-door');
+// --overrun: 停止位置をこれ [m] 行き過ぎるように止める（ホームドアの許容範囲より大きく、オーバーラン限度より小さい）
+const OVERRUN_M = Number(opt('--overrun-m', 4));
 const quiet = args.includes('--quiet');
 const trace = args.includes('--trace');
 const style = opt('--style', 'expert');
@@ -132,7 +138,7 @@ function step(vm, n = 1) {
     }
 }
 
-const KEYMAP = {up: 'ArrowUp', down: 'ArrowDown', space: ' ', h: 'h', enter: 'Enter'};
+const KEYMAP = {up: 'ArrowUp', down: 'ArrowDown', space: ' ', h: 'h', enter: 'Enter', f: 'f', r: 'r'};
 function key(vm, k, down) {
     vm.postIOData('keyboard', {key: KEYMAP[k] || k, isDown: down});
 }
@@ -158,12 +164,17 @@ function desiredNotch(h, state) {
     if (state.station !== idx + ':' + temp) {
         state.station = idx + ':' + temp;
         state.creep = false;
+        state.reversing = false;
         state.offset = STYLE.aim[0] + (STYLE.aim[1] - STYLE.aim[0]) * rand();
+        if (overrun && !(temp > 0 && temp < stationStop)) state.offset = OVERRUN_M;   // わざと行き過ぎる
     }
     const dReal = stop - pos;
     const d = dReal + state.offset;
     state.dReal = dReal;
-    state.tolerance = h.num('停止位置の許容');
+    // ホームドアがあるときは、手前も行き過ぎも「ホームドア_許容範囲」。ないときは手前だけ「停止位置の許容」
+    state.door = h.num('ホームドア') === 1;
+    state.tolerance = state.door ? h.num('ホームドア_許容範囲') : h.num('停止位置の許容');
+    if (state.reversing) return reverseNotch(h, v, -dReal, pos, state);
     const per = h.num('常用最大減速度') / 8;
     const cell = Math.floor(pos / 10);
     const grade = Number(h.get('勾配表')[cell] || 0) * 0.0353;
@@ -194,6 +205,13 @@ function desiredNotch(h, state) {
 
 function brakeToStop(h, v, d, per, grade, state) {
     if (v < 0.05 && state.temp) return -8;   // アクシデントで止まったら、作業が終わるまで待つ
+    if (v < 0.05 && state.door && state.dReal < -state.tolerance) {
+        // 行き過ぎてロープが上がらない（停止位置修正）: レバーサーを「後」にして下がる
+        state.reversing = true;
+        state.offset = 0;
+        state.wantRev = '後';
+        return -8;
+    }
     if (v < 0.05) {
         if (state.dReal > state.tolerance - 0.3) {
             state.offset = 0;   // 手前すぎて採点されなかったので、停止位置まで進め直す
@@ -221,6 +239,27 @@ function brakeToStop(h, v, d, per, grade, state) {
     return -Math.min(8, Math.max(1, Math.round(n)));
 }
 
+// レバーサー「後」で、停止位置まで back [m] 下がって止まる（後退の制限速度より遅く）
+function reverseNotch(h, v, back, pos, state) {
+    const per = h.num('常用最大減速度') / 8;
+    const grade = -Number(h.get('勾配表')[Math.floor(pos / 10)] || 0) * 0.0353;   // 後ろへ進むので坂は逆
+    if (h.get('レバーサー') !== '後') return -8;   // 切り替わるまでブレーキをかけて待つ
+    if (v < 0.05) {
+        if (back < -state.tolerance + 0.3) {
+            // 下がりすぎて手前になった: レバーサーを「前」に戻して進め直す
+            state.reversing = false;
+            state.wantRev = '前';
+            return -8;
+        }
+        return back > 0.6 ? (grade > 0.3 ? 5 : 2) : -8;
+    }
+    const vmax = Math.min(10, h.num('後退の制限速度') - 4);
+    if (back > 25) return v < vmax - 2 ? 2 : v > vmax ? -2 : 0;
+    if (v < 3 && back > 3) return grade > 0.3 ? 4 : 1;
+    if (back > 0.6 && v < 2.5) return 0;
+    return brakeToStop(h, v, back, per, grade, {...state, door: false, temp: false, dReal: back, creep: false});
+}
+
 async function runRoute(routeNo) {
     frame = 0;
     seed = SEED;
@@ -232,6 +271,7 @@ async function runRoute(routeNo) {
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
     if (accidentRate !== null) h.set('アクシデント_起きやすさ', Number(accidentRate));
     if (trackRate !== null) h.set('番線変更_起きやすさ', Number(trackRate));
+    if (noDoor) h.set('ホームドア', 0);
     if (h.get('場面') !== 'タイトル') throw new Error('タイトル画面にならない: ' + h.get('場面'));
     tap(vm, 'space', 3);
     step(vm, 5);
@@ -286,7 +326,12 @@ async function runRoute(routeNo) {
     let lastATS = 0;
     let oppWas = 0;
     let keyHeld = null;
-    const state = {creep: false};
+    const state = {creep: false, wantRev: '前'};
+    // ホームドア: ロープが上がりきる前にドアが開いた・ロープが下がりきる前に発車した、を数える
+    log.door = {on: h.num('ホームドア') === 1, openBeforeUp: 0, departBeforeDown: 0, maxLift: 0, fixes: 0, reverseMoves: 0,
+        lastFix: '', backed: 0, revSeen: false, maxBack: 0};
+    let lastPos = h.num('位置');
+    let stopPos = null;
     // 発車メロディ・ドアチャイム・ドアの合図を記録する（発車の流れの確認用）
     const departures = [];
     const origStartHats = vm.runtime.startHats.bind(vm.runtime);
@@ -317,7 +362,11 @@ async function runRoute(routeNo) {
             const k = h.num('次の駅番号');
             log.arrivals.push({station: h.get('駅名')[k - 1], track: Number(h.get('駅の着く番線')[k - 1]),
                 usual: Number(h.get('駅のいつもの番線')[k - 1]), siding: Number(h.get('駅の副本線の番号')[k - 1]),
-                door: h.get('ドアの側'), lateral: h.num('自分の横'), sidingLat: h.num('副本線の横'), notice: h.get('案内')});
+                door: h.get('ドアの側'), lateral: h.num('自分の横'), sidingLat: h.num('副本線の横'), notice: h.get('案内'),
+                err: Number(h.local('採点', '誤差')), fix: log.door.lastFix, backed: log.door.backed,
+                reverses: h.num('後退回数'), restops: h.num('再停車回数')});
+            log.door.lastFix = '';
+            log.door.backed = 0;
         }
         if (scene !== lastScene) {
             log.events.push(`[${(frame / 30).toFixed(1)}s] 場面=${scene} 次の駅番号=${h.get('次の駅番号')} 案内=${h.get('案内')}`);
@@ -330,8 +379,13 @@ async function runRoute(routeNo) {
         } else if (frame % STYLE.every === 0) {
             let want = -8;
             if (scene === '運転中') want = desiredNotch(h, state);
+            else state.wantRev = '前';   // 駅に止まっているあいだに、レバーサーを「前」に戻しておく
             const cur = h.num('ノッチ');
-            if (want > cur) keyHeld = 'up';
+            const rev = h.get('レバーサー');
+            if (rev !== state.wantRev && h.num('速度') < 0.01 && (scene === '運転中' || scene === '停車中')) {
+                keyHeld = ['後', '切', '前'].indexOf(state.wantRev) > ['後', '切', '前'].indexOf(rev) ? 'f' : 'r';
+            }
+            else if (want > cur) keyHeld = 'up';
             else if (want < cur) keyHeld = 'down';
             if (keyHeld) key(vm, keyHeld, true);
         }
@@ -384,6 +438,27 @@ async function runRoute(routeNo) {
             if (ht > 0 && scene === '運転中') log.viaduct.grades.add(String(h.get('勾配')).split(' ')[0]);
         }
         if (h.num('空港の番号') > 0) log.service.airportSeen = true;
+        if (log.door.on) {
+            const lift = h.num('ロープの上がり具合');
+            log.door.maxLift = Math.max(log.door.maxLift, lift);
+            if (h.get('ドア') === '開' && lift < 0.999) log.door.openBeforeUp++;
+            if (h.get('場面') === '運転中' && lift > 0) log.door.departBeforeDown++;
+            const notice = String(h.get('案内'));
+            if (notice.startsWith('停止位置修正') && notice !== log.door.lastFix) {
+                log.door.fixes++;
+                log.door.lastFix = notice;
+                stopPos = h.num('位置');
+                log.events.push(`[${(frame / 30).toFixed(1)}s] ${notice}`);
+            }
+        }
+        const posNow = h.num('位置');
+        if (h.get('レバーサー') === '後') log.door.revSeen = true;
+        if (posNow < lastPos - 1e-6) {
+            log.door.reverseMoves++;
+            if (stopPos !== null) log.door.backed = Math.max(log.door.backed, stopPos - posNow);
+            log.door.maxBack = Math.max(log.door.maxBack, h.num('いちばん進んだ位置') - posNow);
+        }
+        lastPos = posNow;
         for (const n of ['位置', '速度', 'ブレーキ率', '力行率', '時刻の秒']) {
             if (!Number.isFinite(h.num(n))) nanFrames++;
         }
@@ -403,6 +478,8 @@ async function runRoute(routeNo) {
     log.nanFrames = nanFrames;
     log.stations = h.get('駅名').length;
     log.stops = h.get('駅の種別').filter(k => k === '停車').length;
+    log.tolerance = h.num('ホームドア_許容範囲');
+    log.backLimit = h.num('後退できる距離');
     log.blocks = 0;
     // 発車の流れ: 発車メロディ → ドアチャイム → ドアが閉まる。発車時刻（定刻）との差 [秒]
     const times = h.get('駅の時刻秒').map(Number);
@@ -477,6 +554,33 @@ function melodyProblems(l) {
     return bad;
 }
 
+// ホームドア（ロープ柵）の確認: ロープが上がってからドアが開く・ロープが下がってから発車する。
+// --overrun なら、どの停車駅も「停止位置修正」→ レバーサー「後」で下がる → 許容範囲に止まり直して採点、まで進む
+function doorProblems(l) {
+    const bad = [];
+    const d = l.door;
+    if (d.on) {
+        if (d.openBeforeUp) bad.push(`ロープが上がりきる前にドアが開いていた（${d.openBeforeUp} フレーム）`);
+        if (d.departBeforeDown) bad.push(`ロープが下がりきる前に発車した（${d.departBeforeDown} フレーム）`);
+        if (!(d.maxLift > 0.999)) bad.push('ロープが一度も上がらなかった');
+        for (const a of l.arrivals) {
+            if (Math.abs(a.err) > l.tolerance * 100 + 0.5) bad.push(`${a.station} で許容範囲の外（${a.err}cm）なのにロープが上がった`);
+        }
+    }
+    if (d.maxBack > l.backLimit + 3) bad.push(`後退できる距離（${l.backLimit}m）より ${d.maxBack.toFixed(1)}m 下がった`);
+    if (overrun) {
+        if (!d.on) bad.push('--overrun はホームドアがあるときだけ確かめられる');
+        for (const a of l.arrivals) {
+            if (!a.fix.includes('行き過ぎ')) bad.push(`${a.station} で「停止位置修正（行き過ぎ）」の案内が出なかった`);
+            if (!(a.backed > OVERRUN_M - l.tolerance - 0.5)) bad.push(`${a.station} で後ろへ下がっていない（${a.backed.toFixed(2)}m）`);
+            if (!(a.reverses > 0) || !(a.restops > 0)) bad.push(`${a.station} で後退・再停車が数えられていない（後退 ${a.reverses}・再停車 ${a.restops}）`);
+        }
+        if (!d.revSeen) bad.push('レバーサーが一度も「後」にならなかった');
+        if (l.arrivals.length !== l.stops - 1) bad.push(`止まり直して着いた駅が ${l.arrivals.length}（停車駅は ${l.stops - 1}）`);
+    }
+    return bad;
+}
+
 function report(r, log) {
     origLog(`\n=== 路線${r}: ${log.route}（${style}${reckless ? '・制限無視' : ''}） ===`);
     if (!quiet) for (const e of log.events) origLog('  ' + e);
@@ -499,6 +603,10 @@ function report(r, log) {
     for (const p of melodyProblems(log)) origLog('  ✗ ' + p);
     origLog('  着いた番線: ' + log.arrivals.map(a => `${a.station}${a.track}番線${a.track !== a.usual ? '（変更）' : ''}・${a.door}ドア`).join(' → '));
     for (const p of trackProblems(log)) origLog('  ✗ ' + p);
+    const d = log.door;
+    origLog(`  ホームドア: ${d.on ? 'あり' : 'なし'}（許容範囲 ±${log.tolerance}m）  停止位置修正 ${d.fixes} 回  後ろへ下がった駅 ` +
+        `${log.arrivals.filter(a => a.backed > 0.1).map(a => `${a.station}（${a.backed.toFixed(1)}m・誤差 ${a.err}cm）`).join('・') || 'なし'}`);
+    for (const p of doorProblems(log)) origLog('  ✗ ' + p);
 }
 
 async function menuLength() {
@@ -565,7 +673,7 @@ for (const r of routes) {
 const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
     !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
 const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 ||
-    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length || trackProblems(l).length);
+    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length || trackProblems(l).length || doorProblems(l).length);
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');
