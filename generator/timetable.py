@@ -6,6 +6,8 @@ Scratch の「運転」スプライトと同じ物理（力行・走行抵抗・
 """
 import math
 
+from routes_data import all_grades
+
 DT = 0.02
 PLAN_BRAKE = 3.4      # 計画ブレーキ [km/h/s]
 DWELL = 25            # 停車時間 [秒]（設定スプライトの「停車時間」と同じ）。発車メロディ（約9〜11秒）が入る長さ
@@ -22,7 +24,7 @@ def sec_to_hms(t):
 
 
 def _grade(route, pos):
-    for start, length, g in route['grades']:
+    for start, length, g in all_grades(route):
         if start <= pos < start + length:
             return g
     return 0

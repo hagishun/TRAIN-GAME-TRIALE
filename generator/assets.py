@@ -56,7 +56,8 @@ def circle(cx, cy, r, fill, extra=''):
 HORIZON_SVG_Y = 150
 
 
-def backdrop(kind, ground):
+def backdrop(kind, ground=None):
+    """空の背景（480×360）。ground が None なら空だけ（地平線から下は透明。景色の切り替えで空を混ぜるのに使う）。"""
     stops = {
         '昼': [(0, '#3f82d4'), (0.7, '#a6cdef'), (1, '#e4f1fa')],
         '霧': [(0, '#8c959b'), (0.6, '#b9c0c4'), (1, '#d2d7d9')],
@@ -80,7 +81,7 @@ def backdrop(kind, ground):
         body += circle(350, 128, 70, 'url(#sun)')
     if kind == '黒':
         body = rect(0, 0, 480, 360, 'url(#sky)')
-    else:
+    elif ground is not None:
         body += rect(0, HORIZON_SVG_Y, 480, 360 - HORIZON_SVG_Y, ground)
     return svg(480, 360, body, defs)
 
