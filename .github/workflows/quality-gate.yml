@@ -42,5 +42,7 @@ jobs:
         run: node tools/verify_vm.mjs --quiet
       - name: 番線変更を（2.6km より長い駅間の）すべての停車駅で起こして全路線を自動運転
         run: node tools/verify_vm.mjs --quiet --track-change
+      - name: 番線変更を強制せず、ふつうの抽選（起きやすさ 100%）で全路線とも 3番線に着く
+        run: node tools/verify_vm.mjs --quiet --track-rate 100 --expect-track-change
       - name: 神社線でどの停車駅もわざと行き過ぎ、レバーサー「後」で下がって止まり直す（ホームドアのロープが上がって発車）
         run: node tools/verify_vm.mjs --quiet --route 2 --overrun
