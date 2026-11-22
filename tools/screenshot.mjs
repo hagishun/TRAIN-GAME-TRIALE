@@ -5,6 +5,7 @@
 //   node tools/screenshot.mjs --fps-only # フレームレートだけ測る
 //   node tools/screenshot.mjs --airport  # 路線選択とエアポート特快の写真（02・40〜45）だけ撮る
 //   node tools/screenshot.mjs --viaduct  # 高田から先の高架の写真（50〜61）と、高架の上のフレームレートだけ
+//   node tools/screenshot.mjs --tracks   # 駅の 3番線と番線変更の写真（70〜76）だけ
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -19,6 +20,7 @@ const BUILD = path.join(ROOT, 'build');
 const fpsOnly = process.argv.includes('--fps-only');
 const airportOnly = process.argv.includes('--airport');
 const viaductOnly = process.argv.includes('--viaduct');
+const tracksOnly = process.argv.includes('--tracks');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -61,8 +63,9 @@ const PAGE_HELPERS = () => {
     // かんたんな自動運転（ノッチを目標に近づける）
     let held = null;
     setInterval(() => {
-        if (!window.T.botOn) return;
+        // 押したままのキーは、ボットを止めたあとでも離す（押しっぱなしでノッチが動き続けないように）
         if (held) { window.T.key(held, false); held = null; return; }
+        if (!window.T.botOn) return;
         const T = window.T;
         if (T.get('場面') !== '運転中') return;
         const vel = Number(T.get('速度')), pos = Number(T.get('位置'));
@@ -97,7 +100,7 @@ async function openGame(browser, file) {
     await page.evaluate(PAGE_HELPERS);
     await page.waitForFunction(() => T.get('場面') === 'タイトル', null, {timeout: 30000});
     // でたらめなアクシデントは起こさない（撮りたい場面が変わらないように。アクシデントの写真は決めて起こす）
-    await page.evaluate(() => T.set('アクシデント_起きやすさ', 0));
+    await page.evaluate(() => { T.set('アクシデント_起きやすさ', 0); T.set('番線変更_起きやすさ', 0); });
     return {page, errors};
 }
 
@@ -263,15 +266,65 @@ async function shootViaduct(browser, file) {
     }
 }
 
+// 駅の 3番線と番線変更（70〜76）。信町本線の高田（いつもは 2番線）と、番線変更で 3番線に入る旧信町城下町
+async function shootTracks(browser, file) {
+    const {page, errors} = await openGame(browser, file);
+    await startRoute(page, 1);
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    const turnout = async name => page.evaluate(i => Number(T.get('駅の分岐の始め')[i - 1]), st[name][0]);
+    // 1. 高田に近づく: 分岐器で線路が 3 本に分かれ、島式ホームと右のホームが見える。ホームに入ると番線の表示（3・2・1）
+    const t1 = await turnout('高田');
+    await teleport(page, {pos: t1 + 30 - 80 / 3.6 * 1.2, speed: 80, notch: -1, next: st['高田'][0], early: 40});
+    await page.waitForTimeout(1200);
+    await shot(page, '70-station-three-tracks.png');
+    await teleport(page, {pos: t1 + 115 - 90 / 3.6 * 1.2, speed: 90, notch: -1, next: st['高田'][0], early: 35});
+    await page.waitForTimeout(1200);
+    await shot(page, '75-station-track-numbers.png');
+    // 2. いつもの 2番線に停車（左のドアが開く）。採点の表が消えてから撮る
+    await teleport(page, {pos: st['高田'][1] - 4.4, speed: 6.5, notch: -2, next: st['高田'][0], early: 3});
+    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
+    await page.waitForTimeout(5600);
+    await shot(page, '71-usual-track-stop.png');
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 60000});
+    // 3. 番線変更の案内（旧信町城下町に 3番線で着く）
+    const target = '旧信町城下町';
+    await page.evaluate(([p]) => {
+        T.local('アクシデント', '予定の位置').value = [p];
+        T.local('アクシデント', '予定の種類').value = ['番線変更'];
+    }, [st['中ヶ野宮'][1] - 2000]);
+    await teleport(page, {pos: st['中ヶ野宮'][1] - 2050, speed: 200, notch: 0, next: st[target][0], early: 120});
+    await page.waitForFunction(() => T.local('アクシデント', '種類').value === '番線変更', null, {timeout: 20000});
+    await page.waitForTimeout(700);
+    await shot(page, '72-track-change-announce.png');
+    // 4. 分岐器で曲がって 3番線へ入っていくところ
+    const t2 = await turnout(target);
+    await teleport(page, {pos: t2 + 45, speed: 44, notch: 0, next: st[target][0], early: 25});
+    await page.waitForTimeout(900);
+    await shot(page, '73-track-change-turnout.png');
+    // 5. いつもと違う 3番線に停車（右のドアが開く）
+    await teleport(page, {pos: st[target][1] - 4.4, speed: 6.5, notch: -2, next: st[target][0], early: 3});
+    await page.waitForFunction(() => T.get('場面') === '停車中', null, {timeout: 30000});
+    await page.waitForTimeout(900);
+    await shot(page, '76-track-change-score.png');
+    await page.waitForTimeout(4700);
+    await shot(page, '74-track-change-stop.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+}
+
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
+    if (tracksOnly) {
+        await shootTracks(browser, await pack(true));
+    }
     if (airportOnly) {
         await shootAirportExpress(browser, await pack(true));
     }
     if (viaductOnly) {
         await shootViaduct(browser, await pack(true));
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -385,9 +438,10 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly) {
         await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
         await shootViaduct(browser, path.join(BUILD, 'game.html'));
+        await shootTracks(browser, path.join(BUILD, 'game.html'));
         const file = path.join(BUILD, 'game.html');
         // アクシデント（起きる場所と種類を決めて起こし、障害物などの近くへ移って撮る）
         for (const [route, shots] of [
@@ -416,7 +470,7 @@ try {
             await page.close();
         }
     }
-    for (const compiler of airportOnly ? [] : [true, false]) {
+    for (const compiler of airportOnly || tracksOnly ? [] : [true, false]) {
         for (const viaduct of viaductOnly ? [true] : [false, true]) {
             const r = await measureFps(browser, compiler, viaduct);
             console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);

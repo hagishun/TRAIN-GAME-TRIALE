@@ -40,3 +40,5 @@ jobs:
           PY
       - name: 固定した乱数と時計で3路線を自動運転
         run: node tools/verify_vm.mjs --quiet
+      - name: 番線変更を（2.6km より長い駅間の）すべての停車駅で起こして全路線を自動運転
+        run: node tools/verify_vm.mjs --quiet --track-change

@@ -9,6 +9,8 @@
 //   node tools/verify_vm.mjs --accident 100        # アクシデントの起きやすさ [%]（100 で毎回 2 件）
 //   node tools/verify_vm.mjs --route 2 --plan 倒木@3000,落石@11000   # 起きるアクシデントを決めて走る（種類@場所m）
 //   node tools/verify_vm.mjs --route 3 --plan 動物@6000 --ignore-accidents   # アクシデントを無視して走る（当たったときの確認）
+//   node tools/verify_vm.mjs --track-change        # 番線変更だけを、長い駅間のすべてで起こして走る（ほかのアクシデントは起こさない）
+//   node tools/verify_vm.mjs --track-rate 100      # 番線変更の起きやすさ [%]
 //
 // 時計（Date.now）を偽物にして 1 フレーム = 1/30 秒ずつ進めるので、実時間より速く検証できる。
 // 乱数と時計は路線ごとに最初に戻すので、並べて走っても順番に走っても同じ結果になる。
@@ -32,6 +34,8 @@ const oppRate = opt('--opp', null);
 const accidentRate = opt('--accident', null);
 const plan = opt('--plan', null);
 const ignoreAccidents = args.includes('--ignore-accidents');
+const trackChange = args.includes('--track-change');
+const trackRate = opt('--track-rate', null);
 const quiet = args.includes('--quiet');
 const trace = args.includes('--trace');
 const style = opt('--style', 'expert');
@@ -227,6 +231,7 @@ async function runRoute(routeNo) {
     step(vm, 20);
     if (oppRate !== null) h.set('対向列車_出現率', Number(oppRate));
     if (accidentRate !== null) h.set('アクシデント_起きやすさ', Number(accidentRate));
+    if (trackRate !== null) h.set('番線変更_起きやすさ', Number(trackRate));
     if (h.get('場面') !== 'タイトル') throw new Error('タイトル画面にならない: ' + h.get('場面'));
     tap(vm, 'space', 3);
     step(vm, 5);
@@ -244,6 +249,16 @@ async function runRoute(routeNo) {
         const lv = n => Object.values(acc.variables).find(v => v.name === n);
         lv('予定の位置').value = items.map(x => x[1]);
         lv('予定の種類').value = items.map(x => x[0]);
+    }
+    if (trackChange) {
+        // 番線変更だけを、前の停車駅を出て 900m の所で起こす（駅間が 2.6km より短い所はのぞく）
+        const pos = h.get('駅の位置').map(Number), kinds = h.get('駅の種別');
+        const stops = pos.filter((_, i) => kinds[i] === '停車');
+        const at = stops.slice(1).map((p, i) => [stops[i], p]).filter(([a, b]) => b - a > 2600).map(([a]) => a + 900);
+        const acc = h.sprite('アクシデント');
+        const lv = n => Object.values(acc.variables).find(v => v.name === n);
+        lv('予定の位置').value = at;
+        lv('予定の種類').value = at.map(() => '番線変更');
     }
     const routeName = h.get('路線名');
     const log = {route: routeName, events: [], opposing: 0, passes: 0, ats: 0, atsEB: 0, maxFrameMs: 0, accidents: []};
@@ -263,6 +278,8 @@ async function runRoute(routeNo) {
     };
     // 高架: 高さ・坂の勾配の表示
     log.viaduct = {count: h.get('高架の開始').length, maxHeight: 0, grades: new Set()};
+    // 停車した駅ごとの、着いた番線・開いたドアの側・電車の横の位置（副本線なら「副本線の横」）
+    log.arrivals = [];
     let lastMix = 0;
     let lastKind = '';
     let lastScene = '';
@@ -296,6 +313,12 @@ async function runRoute(routeNo) {
     let nanFrames = 0;
     while (h.get('場面') !== '結果' && frame < maxFrames) {
         const scene = h.get('場面');
+        if (scene !== lastScene && scene === '停車中' && lastScene === '運転中') {
+            const k = h.num('次の駅番号');
+            log.arrivals.push({station: h.get('駅名')[k - 1], track: Number(h.get('駅の着く番線')[k - 1]),
+                usual: Number(h.get('駅のいつもの番線')[k - 1]), siding: Number(h.get('駅の副本線の番号')[k - 1]),
+                door: h.get('ドアの側'), lateral: h.num('自分の横'), sidingLat: h.num('副本線の横'), notice: h.get('案内')});
+        }
         if (scene !== lastScene) {
             log.events.push(`[${(frame / 30).toFixed(1)}s] 場面=${scene} 次の駅番号=${h.get('次の駅番号')} 案内=${h.get('案内')}`);
             lastScene = scene;
@@ -426,6 +449,18 @@ function serviceProblems(l) {
     return bad;
 }
 
+// 番線の確認: 副本線に着いたら右のドア・電車も副本線の上、本線なら左のドア。--track-change なら番線変更で着いた駅がある
+function trackProblems(l) {
+    const bad = [];
+    for (const a of l.arrivals) {
+        const onSiding = a.track === a.siding;
+        if (a.door !== (onSiding ? '右' : '左')) bad.push(`${a.station}（${a.track}番線）で ${a.door} のドアが開いた`);
+        if (Math.abs(a.lateral - (onSiding ? a.sidingLat : 0)) > 0.05) bad.push(`${a.station}（${a.track}番線）で電車の横の位置が ${a.lateral}`);
+    }
+    if (trackChange && !l.arrivals.some(a => a.track !== a.usual)) bad.push('番線変更で着いた駅がない');
+    return bad;
+}
+
 // 発車メロディの確認: となりの停車駅が同じ曲にならない（終点もふくむ）、発車のとき表どおりの曲が鳴った
 function melodyProblems(l) {
     const bad = [];
@@ -462,6 +497,8 @@ function report(r, log) {
     origLog('  停車駅の発車メロディ: ' + log.stopSongs.map(s => `${s.station}♪${s.song}`).join(' → '));
     for (const p of serviceProblems(log)) origLog('  ✗ ' + p);
     for (const p of melodyProblems(log)) origLog('  ✗ ' + p);
+    origLog('  着いた番線: ' + log.arrivals.map(a => `${a.station}${a.track}番線${a.track !== a.usual ? '（変更）' : ''}・${a.door}ドア`).join(' → '));
+    for (const p of trackProblems(log)) origLog('  ✗ ' + p);
 }
 
 async function menuLength() {
@@ -528,7 +565,7 @@ for (const r of routes) {
 const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
     !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
 const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 ||
-    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length);
+    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length || trackProblems(l).length);
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');

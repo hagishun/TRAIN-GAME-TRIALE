@@ -92,6 +92,17 @@ def build_hud(p):
         s.script(when_recv('運転画面を表示'), [goto(lx, ly), show()], comment='運転台の上の枠に置く')
         s.script(when_recv('表示'), [if_else(cond, [costume('点灯')], [costume('消灯')])], comment='毎フレーム')
 
+    # 開扉表示灯（どちら側のドアが開いているか）
+    s = _hud_sprite(p, '開扉表示灯', '【開扉表示灯】ドアが開いているとき、どちら側のドアが開いているかを光って知らせる。\n'
+                                  'ふだん（2番線）は島式ホームのある左、番線変更で副本線（3番線）に着いたときは右が開く（変数「ドアの側」）。')
+    s.costume_svg('消灯', *assets.lamp('開扉', False, '#40c060'))
+    s.costume_svg('左', *assets.lamp('◀左扉', True, '#40c060'))
+    s.costume_svg('右', *assets.lamp('右扉▶', True, '#40c060'))
+    lx, ly = _svg_to_stage(122, 12)
+    s.script(when_recv('運転画面を表示'), [goto(lx, ly), show()], comment='運転台の上の枠（戸閉表示灯のとなり）に置く')
+    s.script(when_recv('表示'), [if_else(eq(V('ドア'), '開'), [costume(V('ドアの側'))], [costume('消灯')])],
+             comment='ドアが開いているときは、開いている側（「ドアの側」の左・右）のコスチュームにする')
+
     # 画面（タイトル・メニュー・結果のパネル）
     s = p.sprite('画面')
     s.overview = ('【画面スプライト】タイトル・路線選択・車両選択・結果のパネルを出す。いちばん手前に表示される。\n'
