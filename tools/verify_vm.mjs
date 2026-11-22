@@ -332,6 +332,9 @@ async function runRoute(routeNo) {
         lastFix: '', backed: 0, revSeen: false, maxBack: 0};
     let lastPos = h.num('位置');
     let stopPos = null;
+    // 分岐器の「ガタン」と運転台の揺れ: 分岐器ごと（駅の手前・先）に、こえた車軸の数・鳴った回数・揺れの大きさを記録する
+    log.turnout = {passes: {}, outside: [], strayEvents: [], lastEventFrame: -999, axles: 4 * h.num('編成両数')};
+    let lastGatan = Number(h.local('分岐器の音', 'ガタンの回数'));
     // 発車メロディ・ドアチャイム・ドアの合図を記録する（発車の流れの確認用）
     const departures = [];
     const origStartHats = vm.runtime.startHats.bind(vm.runtime);
@@ -459,6 +462,42 @@ async function runRoute(routeNo) {
             log.door.maxBack = Math.max(log.door.maxBack, h.num('いちばん進んだ位置') - posNow);
         }
         lastPos = posNow;
+        {
+            // 電車（先頭〜最後尾）が、このフレームのあいだに、どの駅の分岐器の範囲（分岐の始め〜分岐の終わり）にかかったか
+            const T = log.turnout;
+            const len = h.num('列車長');
+            const starts = h.get('駅の分岐の始め').map(Number), ends = h.get('駅の分岐の終わり').map(Number);
+            const lo = Math.min(T.prevPos ?? posNow, posNow), hi = Math.max(T.prevPos ?? posNow, posNow);
+            T.prevPos = posNow;
+            const k = starts.findIndex((s0, i) => s0 - 1 <= hi && lo - len <= ends[i] + 1);
+            const gatan = Number(h.local('分岐器の音', 'ガタンの回数'));
+            const sx = h.num('揺れのx'), sy = h.num('揺れのy'), yaw = h.num('揺れの向き');
+            if (gatan !== lastGatan) {
+                if (k < 0) T.strayEvents.push(posNow.toFixed(1));
+                else {
+                    const stop = Number(h.get('駅の位置')[k]);
+                    const key = `${h.get('駅名')[k]}・${posNow < stop ? '手前' : '先'}`;
+                    const bent = Number(h.local('分岐器の音', '_鳴らす曲がる'));
+                    const p = T.passes[key] = T.passes[key] || {key, bent, axles: 0, sounds: 0, maxY: 0, maxX: 0, maxYaw: 0,
+                        speeds: [], times: []};
+                    p.axles += gatan - lastGatan;
+                    p.sounds++;
+                    p.speeds.push(h.num('速度'));
+                    p.times.push(frame / 30);
+                    p.current = p;
+                }
+                T.lastEventFrame = frame;
+                T.cur = k >= 0 ? T.passes[`${h.get('駅名')[k]}・${posNow < Number(h.get('駅の位置')[k]) ? '手前' : '先'}`] : null;
+            }
+            lastGatan = gatan;
+            if (T.cur && frame - T.lastEventFrame < 15) {
+                T.cur.maxY = Math.max(T.cur.maxY, Math.abs(sy));
+                T.cur.maxX = Math.max(T.cur.maxX, Math.abs(sx));
+                T.cur.maxYaw = Math.max(T.cur.maxYaw, Math.abs(yaw));
+            }
+            // 最後の「ガタン」から 0.7 秒より後に揺れが残っていたら、分岐器の外で揺れたことになる
+            if ((sx !== 0 || sy !== 0 || yaw !== 0) && frame - T.lastEventFrame > 21) T.outside.push(posNow.toFixed(0));
+        }
         for (const n of ['位置', '速度', 'ブレーキ率', '力行率', '時刻の秒']) {
             if (!Number.isFinite(h.num(n))) nanFrames++;
         }
@@ -538,6 +577,30 @@ function trackProblems(l) {
     return bad;
 }
 
+// 分岐器の「ガタン」と揺れの確認: 分岐器の外では鳴らず揺れない。通った分岐器ごとに、すべての車軸が
+// トングレールとクロッシングの 2 か所で鳴る（車軸の数×2 回）。曲がるときは、まっすぐより強く揺れ、横にも揺れる
+function turnoutProblems(l) {
+    const bad = [];
+    const T = l.turnout;
+    if (T.strayEvents.length) bad.push(`分岐器の外で「ガタン」が鳴った（${T.strayEvents.slice(0, 5).join('・')}m）`);
+    if (T.outside.length) bad.push(`分岐器の外で揺れていた（${T.outside.length} フレーム、${T.outside.slice(0, 5).join('・')}m）`);
+    const passes = Object.values(T.passes);
+    if (!passes.length) bad.push('分岐器を一度も通らなかった');
+    for (const p of passes) {
+        if (p.axles !== T.axles * 2) bad.push(`${p.key} の分岐器で車軸が ${p.axles} 回こえた（${T.axles * 2} 回のはず）`);
+        if (!(p.maxY > 0)) bad.push(`${p.key} の分岐器で運転台が揺れなかった`);
+        if (p.bent && !(p.maxX > 0 && p.maxYaw > 0)) bad.push(`${p.key} の分岐器で曲がったのに横に揺れなかった`);
+        if (!p.bent && (p.maxX > 0 || p.maxYaw > 0)) bad.push(`${p.key} の分岐器をまっすぐ通ったのに横に揺れた`);
+    }
+    const straight = passes.filter(p => !p.bent), bent = passes.filter(p => p.bent);
+    if (straight.length && bent.length) {
+        const ms = Math.max(...straight.map(p => p.maxY)), mb = Math.min(...bent.map(p => p.maxY));
+        if (!(mb > ms)) bad.push(`曲がるときの揺れ（いちばん小さい ${mb}px）が、まっすぐのとき（いちばん大きい ${ms}px）より強くない`);
+    }
+    if (trackChange && !bent.length) bad.push('番線変更で分岐器を曲がらなかった');
+    return bad;
+}
+
 // 発車メロディの確認: となりの停車駅が同じ曲にならない（終点もふくむ）、発車のとき表どおりの曲が鳴った
 function melodyProblems(l) {
     const bad = [];
@@ -607,6 +670,25 @@ function report(r, log) {
     origLog(`  ホームドア: ${d.on ? 'あり' : 'なし'}（許容範囲 ±${log.tolerance}m）  停止位置修正 ${d.fixes} 回  後ろへ下がった駅 ` +
         `${log.arrivals.filter(a => a.backed > 0.1).map(a => `${a.station}（${a.backed.toFixed(1)}m・誤差 ${a.err}cm）`).join('・') || 'なし'}`);
     for (const p of doorProblems(log)) origLog('  ✗ ' + p);
+    const T = log.turnout;
+    const passes = Object.values(T.passes);
+    const fmt = p => {
+        const v = p.speeds;
+        const gaps = p.times.slice(1).map((t, i) => t - p.times[i]);
+        return `${p.key}${p.bent ? '（曲がる）' : ''} ${Math.round(Math.min(...v))}〜${Math.round(Math.max(...v))}km/h 車軸 ${p.axles}・鳴った ${p.sounds} 回` +
+            `（${(p.times[p.times.length - 1] - p.times[0]).toFixed(1)} 秒、間かく最小 ${Math.min(...gaps).toFixed(2)} 秒）` +
+            ` 揺れ 上下 ${p.maxY}px${p.bent ? `・左右 ${p.maxX}px・景色 ${(p.maxYaw * 400).toFixed(1)}px` : ''}`;
+    };
+    origLog(`  分岐器: ${passes.length} か所（まっすぐ ${passes.filter(p => !p.bent).length}・曲がる ${passes.filter(p => p.bent).length}）` +
+        `  分岐器の外の揺れ ${T.outside.length} フレーム・外の「ガタン」 ${T.strayEvents.length} 回`);
+    if (!quiet) for (const p of passes) origLog('    ' + fmt(p));
+    else {
+        const top = [...passes].sort((a, b) => b.maxY - a.maxY);
+        for (const p of [top[0], ...passes.filter(p => p.bent).slice(0, 1), top[top.length - 1]].filter((x, i, a) => x && a.indexOf(x) === i)) {
+            origLog('    ' + fmt(p));
+        }
+    }
+    for (const p of turnoutProblems(log)) origLog('  ✗ ' + p);
 }
 
 async function menuLength() {
@@ -673,7 +755,8 @@ for (const r of routes) {
 const badDeparture = l => l.departures.length !== l.stops - 1 || l.departures.some(d =>
     !d.song || !(d.chime > d.melody) || !(d.door > d.chime) || d.door - d.planned > 3 + d.late);
 const failed = all.filter(l => l.scene !== '結果' || l.stationResults.length !== l.stops - 1 || l.nanFrames > 0 ||
-    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length || trackProblems(l).length || doorProblems(l).length);
+    badDeparture(l) || serviceProblems(l).length || melodyProblems(l).length || trackProblems(l).length || doorProblems(l).length ||
+    turnoutProblems(l).length);
 origLog('\n問題（エラー・警告）: ' + (problems.length ? '\n  ' + [...new Set(problems)].slice(0, 30).join('\n  ') : 'なし'));
 if (failed.length || problems.length) {
     origLog('検証失敗');
