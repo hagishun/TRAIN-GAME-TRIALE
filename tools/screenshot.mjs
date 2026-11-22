@@ -7,6 +7,7 @@
 //   node tools/screenshot.mjs --viaduct  # 高田から先の高架の写真（50〜61）と、高架の上のフレームレートだけ
 //   node tools/screenshot.mjs --tracks   # 駅の 3番線と番線変更の写真（70〜76）だけ
 //   node tools/screenshot.mjs --ropes    # ホームドア（ロープ柵）・停止位置修正・レバーサーの後退・160km/h の標識（80〜87）だけ
+//   node tools/screenshot.mjs --turnout  # 分岐器の「ガタン」で運転台が揺れた瞬間と、揺れていない瞬間（88〜92）だけ
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -23,6 +24,7 @@ const airportOnly = process.argv.includes('--airport');
 const viaductOnly = process.argv.includes('--viaduct');
 const tracksOnly = process.argv.includes('--tracks');
 const ropesOnly = process.argv.includes('--ropes');
+const turnoutOnly = process.argv.includes('--turnout');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -384,6 +386,77 @@ async function shootRopes(browser, file) {
     await page.close();
 }
 
+// 分岐器の「ガタン」: 揺れた瞬間（運転台がずれている）と、揺れていない瞬間を同じ場所で撮って並べる。
+// 揺れはすぐもどるので、条件に合ったフレームを描いたところで VM を止めて（次のフレームに進めないで）撮る
+async function shootTurnout(browser, file) {
+    const {page, errors} = await openGame(browser, file);
+    await page.evaluate(() => {
+        const step = T.vm.runtime._step.bind(T.vm.runtime);
+        T.vm.runtime._step = function () {
+            if (T.frozen) return;
+            step();
+            if (T.freezeWhen && T.freezeWhen()) {
+                T.frozen = true;
+                T.freezeWhen = null;
+            }
+        };
+    });
+    await startRoute(page, 1);
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    const turnout = async name => page.evaluate(i => Number(T.get('駅の分岐の始め')[i - 1]), st[name][0]);
+    const frozenShot = async (cond, name) => {
+        await page.evaluate(src => { T.frozen = false; T.freezeWhen = (0, eval)(src); }, `(${cond})`);
+        await page.waitForFunction(() => T.frozen, null, {timeout: 30000});
+        await page.waitForTimeout(150);
+        const s = await page.evaluate(() => ({x: Number(T.get('揺れのx')), y: Number(T.get('揺れのy')),
+            view: Number(T.get('揺れの向き')) * Number(T.get('焦点距離')), v: Number(T.get('速度')), pos: Number(T.get('位置'))}));
+        await shot(page, name);
+        console.log(`    揺れ 上下 ${s.y}px・左右 ${s.x}px・景色 ${s.view.toFixed(1)}px（${s.v.toFixed(0)}km/h・${s.pos.toFixed(0)}m）`);
+        await page.evaluate(() => { T.frozen = false; });
+        return s;
+    };
+    const hold = speed => page.evaluate(v => { clearInterval(T.hold); T.hold = setInterval(() => T.set('速度', v), 15); }, speed);
+    // 1. 中ヶ野宮（通過駅）の分岐器を 160km/h でまっすぐ通る。手前（揺れていない）と、クロッシングで揺れた瞬間
+    const t1 = await turnout('中ヶ野宮');
+    await teleport(page, {pos: t1 - 300, speed: 160, notch: 0, next: st['旧信町城下町'][0], early: 90});
+    await hold(160);
+    // 揺れていない瞬間は、クロッシングの少し手前（トングレールの先の「ガタン」と「ガタン」のあいだ）で撮る
+    const still = "Number(T.get('揺れのy')) === 0 && Number(T.get('揺れのx')) === 0";
+    await frozenShot(`() => Number(T.get('位置')) > ${t1 + 70} && ${still}`, '88-turnout-straight-still.png');
+    await frozenShot(`() => Number(T.get('揺れのy')) >= 5`, '89-turnout-straight-shake.png');
+    // 2. 旧信町城下町に番線変更（アクシデント）で 3番線へ。分岐器を 45km/h で曲がる。手前（揺れていない）と、横にも揺れた瞬間
+    const target = '旧信町城下町';
+    await page.evaluate(([p]) => {
+        T.local('アクシデント', '予定の位置').value = [p];
+        T.local('アクシデント', '予定の種類').value = ['番線変更'];
+    }, [st['中ヶ野宮'][1] - 2000]);
+    await teleport(page, {pos: st['中ヶ野宮'][1] - 2050, speed: 200, notch: 0, next: st[target][0], early: 120});
+    await page.waitForFunction(() => T.local('アクシデント', '種類').value === '番線変更', null, {timeout: 20000});
+    const t2 = await turnout(target);
+    await teleport(page, {pos: t2 + 20, speed: 45, notch: 0, next: st[target][0], early: 40});
+    await hold(45);
+    await frozenShot(`() => Number(T.get('位置')) > ${t2 + 70} && ${still}`, '90-turnout-diverge-still.png');
+    const s = await frozenShot(`() => Number(T.get('揺れのy')) >= 6 && Math.abs(Number(T.get('揺れのx'))) >= 5`, '91-turnout-diverge-shake.png');
+    await page.evaluate(() => clearInterval(T.hold));
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+    // 並べて比べる絵（左: 揺れていない、右: 揺れた瞬間。運転台の上の端と、窓の下の端に目安の線）
+    const cmp = await browser.newPage({viewport: {width: 980, height: 820}, deviceScaleFactor: 1});
+    const img = n => 'data:image/png;base64,' + fs.readFileSync(path.join(OUT, n)).toString('base64');
+    const cell = (n, label) => `<figure><div class="w"><img src="${img(n)}"><i class="a"></i><i class="b"></i></div><figcaption>${label}</figcaption></figure>`;
+    await cmp.setContent(`<style>body{margin:0;background:#111;color:#eee;font:15px sans-serif}div.g{display:grid;grid-template-columns:480px 480px;gap:10px;padding:5px}
+        figure{margin:0}.w{position:relative;width:480px;height:360px}img{width:480px;height:360px;display:block}
+        i{position:absolute;left:0;right:0;height:0;border-top:1px dashed #0ff}i.a{top:25px}i.b{top:240px}figcaption{padding:4px 2px 8px}</style>
+        <div class="g">${cell('88-turnout-straight-still.png', 'まっすぐ（160km/h）: 分岐器の手前。揺れていない')}
+        ${cell('89-turnout-straight-shake.png', 'まっすぐ: クロッシングで「ガタン」。運転台が上にずれた')}
+        ${cell('90-turnout-diverge-still.png', '曲がって 3番線へ（45km/h）: 揺れていない')}
+        ${cell(`91-turnout-diverge-shake.png`, `曲がる: 上に ${s.y}px・横に ${Math.abs(s.x)}px ずれ、景色も横にずれた`)}</div>`);
+    await cmp.screenshot({path: path.join(OUT, '92-turnout-compare.png'), fullPage: true});
+    console.log('  saved 92-turnout-compare.png');
+    await cmp.close();
+}
+
 const browser = await chromium.launch({args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']});
 try {
     if (tracksOnly) {
@@ -392,13 +465,16 @@ try {
     if (ropesOnly) {
         await shootRopes(browser, await pack(true));
     }
+    if (turnoutOnly) {
+        await shootTurnout(browser, await pack(true));
+    }
     if (airportOnly) {
         await shootAirportExpress(browser, await pack(true));
     }
     if (viaductOnly) {
         await shootViaduct(browser, await pack(true));
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -512,7 +588,7 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly) {
         await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
         await shootRopes(browser, path.join(BUILD, 'game.html'));
         await shootViaduct(browser, path.join(BUILD, 'game.html'));
@@ -545,7 +621,7 @@ try {
             await page.close();
         }
     }
-    for (const compiler of airportOnly || tracksOnly || ropesOnly ? [] : [true, false]) {
+    for (const compiler of airportOnly || tracksOnly || ropesOnly || turnoutOnly ? [] : [true, false]) {
         for (const viaduct of viaductOnly ? [true] : [false, true]) {
             const r = await measureFps(browser, compiler, viaduct);
             console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);

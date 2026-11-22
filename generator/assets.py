@@ -665,6 +665,9 @@ def _gauge(cx, cy, r, vmax, step_minor, step_label, unit, label_div=1, red_from=
     return b
 
 
+CAB_BLEED = 16   # 運転台の絵を、画面より何ピクセルずつ広く描くか（揺れたときにふちが見えないように）
+
+
 def cab(name, body_col='#2f3a4a', face_col='#232a35'):
     b = ''
     # 上の枠と左右の柱
@@ -691,7 +694,13 @@ def cab(name, body_col='#2f3a4a', face_col='#232a35'):
     b += rect(162, 254, 214, 100, '#0a1a33', rx=4, extra='stroke="#3fa9f5" stroke-width="1"')
     b += rect(162, 254, 214, 3, '#3fa9f5')
     b += text(372, 352, 'TIMS', 6, '#3fa9f5', anchor='end', weight='normal')
-    return svg(480, 360, b)
+    # 分岐器で運転台が揺れても（最大 12 ピクセル）画面のふちにすき間ができないように、まわりを CAB_BLEED ずつ広く描く
+    m = CAB_BLEED
+    bleed = (rect(-m, -m, 480 + 2 * m, 25 + m, '#22262d') + rect(-m, 22, m, 3, '#3a4049') + rect(480, 22, m, 3, '#3a4049')
+             + rect(-m, 25, m, 225, '#2a2f37') + rect(480, 25, m, 225, '#2a2f37')
+             + rect(-m, 240, 480 + 2 * m, 120 + m, body_col) + rect(-m, 240, 480 + 2 * m, 3, ORANGE)
+             + rect(-m, 243, 480 + 2 * m, 2, BLUE))
+    return svg(480 + 2 * m, 360 + 2 * m, f'<g transform="translate({m},{m})">{bleed}{b}</g>')
 
 
 def needle(color, length):
@@ -1124,10 +1133,45 @@ def snd_platform_door():
     return _wav(out)
 
 
+def snd_turnout(variant, diverge=False):
+    """分岐器（ポイント）のトングレールやクロッシングのすき間を、車輪（車軸 1 本）がこえる「ガタン」という音。
+    ジョイントの「タタン」より重く、金属がぶつかって鳴りひびく。曲がるとき（diverge）は、
+    車輪のつばがレールに当たる「ギッ」と、2 回目の衝撃が加わって、もっと激しくなる。
+    variant（1〜3）で高さと響きを少しずつ変え、続けて鳴らしても同じ音のくり返しに聞こえないようにする。"""
+    k = (0.94, 1.0, 1.07)[variant - 1]
+    seed = 70 + variant + (10 if diverge else 0)
+    dur = 0.5
+    out = np.zeros(int(RATE * dur))
+    t = _t(dur)
+    # 重い「ゴン」: 低い音がすぐ消える
+    thump = np.sin(2 * np.pi * 52 * k * t) * np.exp(-11 * t) + 0.7 * np.sin(2 * np.pi * 96 * k * t) * np.exp(-17 * t)
+    # 「ガッ」: こもった衝撃（低い所だけのノイズ）
+    knock = _lowpass(_noise(len(t), seed), 1100) * np.exp(-22 * t) * 3.2
+    # 金属の「カーン」: 倍音がずれた響き（レールや車輪が鳴る）
+    ring = sum(a * np.sin(2 * np.pi * f * k * t + p) * np.exp(-d * t)
+               for f, a, d, p in ((640, 0.45, 13, 0.3), (1030, 0.32, 16, 1.1), (1610, 0.24, 20, 2.0),
+                                  (2440, 0.16, 26, 0.7), (3480, 0.1, 34, 2.6)))
+    # 当たった瞬間の「カチッ」（高い音だけのノイズ）
+    n = _noise(len(t), seed + 1)
+    click = (n - _lowpass(n, 2500)) * np.exp(-140 * t) * 0.7
+    x = 1.25 * thump + knock + ring + click
+    if diverge:
+        # 曲がるとき: もっと重い衝撃と、少しあとにもう 1 回（つばがガードレールに当たる）、それと「ギッ」
+        x += 0.6 * np.sin(2 * np.pi * 44 * k * t) * np.exp(-11 * t)
+        second = np.zeros_like(x)
+        _place(second, (0.8 * thump + 0.7 * knock + 0.6 * ring)[:int(RATE * 0.4)], 0.045)
+        x += second
+        sq = sum(a * np.sin(2 * np.pi * f * k * t) for f, a in ((2650, 1.0), (3190, 0.55), (4300, 0.25)))
+        x += sq * _env(len(t), 0.01, 0.12, 1.0) * np.exp(-9 * t) * 0.35
+    out[:] = x * _env(len(t), 0.0, 0.08)
+    return _wav(out / max(1e-6, np.abs(out).max()))
+
+
 # 効果音（名前: 作る関数）。最大音量（peak）はそろえてある。
 _PEAK = {'警笛': 0.95, '遠くの警笛': 0.6, 'ドアチャイム': 0.9, 'ATSベル': 0.8, 'ジョイント': 0.9,
          'モーター': 0.7, '走行音': 0.45, 'すれ違い': 0.95, 'ブレーキ緩め': 0.6, 'ドア': 0.8, '採点': 0.9, 'ピタ停車': 0.9,
-         '結果': 0.9, '決定': 0.8, 'きしみ': 0.6, '警報': 0.75, '衝突': 0.9, 'レバーサー': 0.7, 'ホームドア': 0.6}
+         '結果': 0.9, '決定': 0.8, 'きしみ': 0.6, '警報': 0.75, '衝突': 0.9, 'レバーサー': 0.7, 'ホームドア': 0.6,
+         **{f'ガタン_まっすぐ{v}': 0.85 for v in (1, 2, 3)}, **{f'ガタン_曲がる{v}': 0.95 for v in (1, 2, 3)}}
 
 
 def _normalized(name, fn):
@@ -1159,6 +1203,8 @@ SOUNDS = {name: _normalized(name, fn) for name, fn in {
     '衝突': snd_impact,
     'レバーサー': snd_reverser,
     'ホームドア': snd_platform_door,
+    **{f'ガタン_まっすぐ{v}': (lambda v=v: snd_turnout(v)) for v in (1, 2, 3)},
+    **{f'ガタン_曲がる{v}': (lambda v=v: snd_turnout(v, diverge=True)) for v in (1, 2, 3)},
 }.items()}
 
 # どのスプライトにどの音を入れるか（音量を別々に変えられるように分けている）
@@ -1168,6 +1214,7 @@ SOUND_SPRITES = {
     'モーター音': ['モーター'],
     '走行音': ['走行音', 'ジョイント'],
     'きしみ音': ['きしみ'],
+    '分岐器の音': [f'ガタン_まっすぐ{v}' for v in (1, 2, 3)] + [f'ガタン_曲がる{v}' for v in (1, 2, 3)],
 }
 
 
