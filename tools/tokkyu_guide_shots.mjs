@@ -374,7 +374,6 @@ async function shot(name, marks = [], {clip} = {}) {
     await clearMarks();
 }
 
-const grow = (b, dx, dy = dx) => ({x: b.x - dx, y: b.y - dy, w: b.w + 2 * dx, h: b.h + 2 * dy});
 const union = (...bs) => {
     const x = Math.min(...bs.map(b => b.x)), y = Math.min(...bs.map(b => b.y));
     return {x, y, w: Math.max(...bs.map(b => b.x + b.w)) - x, h: Math.max(...bs.map(b => b.y + b.h)) - y};
