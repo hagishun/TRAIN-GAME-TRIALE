@@ -8,6 +8,8 @@
 //   node tools/screenshot.mjs --tracks   # 駅の 3番線と番線変更の写真（70〜76）だけ
 //   node tools/screenshot.mjs --ropes    # ホームドア（ロープ柵）・停止位置修正・レバーサーの後退・160km/h の標識（80〜87）だけ
 //   node tools/screenshot.mjs --turnout  # 分岐器の「ガタン」で運転台が揺れた瞬間と、揺れていない瞬間（88〜92）だけ
+//   node tools/screenshot.mjs --roof     # 駅の屋根（ホームの上屋）の写真（93〜99）だけ
+//   node tools/screenshot.mjs --station-fps  # 駅の近く（止まったまま 3 場面）の 1 フレームの処理時間だけ（SB3=前の版.sb3 で前の版も測れる）
 import fs from 'fs';
 import path from 'path';
 import {createRequire} from 'module';
@@ -16,7 +18,7 @@ import {chromium} from 'playwright';
 const require = createRequire(import.meta.url);
 const Packager = require('@turbowarp/packager');
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), '..');
-const SB3 = path.join(ROOT, 'train-driver-3d.sb3');
+const SB3 = process.env.SB3 || path.join(ROOT, 'train-driver-3d.sb3');   // SB3=… で前の版の .sb3 も測れる
 const OUT = path.join(ROOT, 'docs', 'screenshots');
 const BUILD = path.join(ROOT, 'build');
 const fpsOnly = process.argv.includes('--fps-only');
@@ -25,6 +27,8 @@ const viaductOnly = process.argv.includes('--viaduct');
 const tracksOnly = process.argv.includes('--tracks');
 const ropesOnly = process.argv.includes('--ropes');
 const turnoutOnly = process.argv.includes('--turnout');
+const roofOnly = process.argv.includes('--roof');
+const stationFps = process.argv.includes('--station-fps');
 fs.mkdirSync(OUT, {recursive: true});
 fs.mkdirSync(BUILD, {recursive: true});
 
@@ -179,6 +183,85 @@ async function measureFps(browser, compiler, viaduct = false) {
     await page.close();
     return {mode: (compiler ? 'コンパイラ（TurboWarp）' : 'インタプリタ（素の Scratch 相当）') + (viaduct ? '・高架の上' : ''), fps: r.steps / sec,
         msPerFrame: r.stepMs / Math.max(1, r.steps), gl, errors};
+}
+
+// 駅の屋根（ホームの上屋）（93〜99）。信町本線の高田（2番線）・旧信町城下町（番線変更で 3番線）、神社線（霧）、
+// 田原海岸線の新鎌京橋と信町空港（屋根がホームの端から端まであるので、止まったときも屋根の下）
+async function shootRoof(browser, file) {
+    const stations = page => page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    const open = async route => {
+        const r = await openGame(browser, file);
+        await r.page.evaluate(() => T.set('対向列車_出現率', 0));
+        await startRoute(r.page, route);
+        await r.page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+        return {...r, st: await stations(r.page)};
+    };
+    let {page, errors, st} = await open(1);
+    // 1. 高田に近づく（約 190m 手前）: 両方のホームに屋根と柱
+    await teleport(page, {pos: st['高田'][1] - 205, speed: 60, notch: -2, next: st['高田'][0], early: 30});
+    await page.waitForTimeout(900);
+    await shot(page, '93-roof-approach.png');
+    // 2. ホームに入って屋根の下を走る（2番線）
+    await teleport(page, {pos: st['高田'][1] - 95, speed: 38, notch: -2, next: st['高田'][0], early: 14});
+    await page.waitForTimeout(900);
+    await shot(page, '94-roof-under-track2.png');
+    // 3. 番線変更で 3番線に入る旧信町城下町（分岐器を過ぎて、屋根の下へ）
+    const target = '旧信町城下町';
+    await page.evaluate(([p]) => {
+        T.local('アクシデント', '予定の位置').value = [p];
+        T.local('アクシデント', '予定の種類').value = ['番線変更'];
+    }, [st['中ヶ野宮'][1] - 2000]);
+    await teleport(page, {pos: st['中ヶ野宮'][1] - 2050, speed: 200, notch: 0, next: st[target][0], early: 120});
+    await page.waitForFunction(() => T.local('アクシデント', '種類').value === '番線変更', null, {timeout: 20000});
+    await teleport(page, {pos: st[target][1] - 110, speed: 40, notch: -1, next: st[target][0], early: 20});
+    await page.waitForTimeout(900);
+    await shot(page, '96-roof-track3.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+    // 4. 神社線（霧）の神社正門
+    ({page, errors, st} = await open(2));
+    await teleport(page, {pos: st['神社正門'][1] - 200, speed: 50, notch: -2, next: st['神社正門'][0], early: 30});
+    await page.waitForTimeout(1300);
+    await shot(page, '97-roof-jinja-fog.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+    // 5. 田原海岸線の新鎌京橋と、信町空港（近づく → 屋根の下に止まって、ロープが上がる）
+    ({page, errors, st} = await open(3));
+    await teleport(page, {pos: st['新鎌京橋'][1] - 200, speed: 50, notch: -2, next: st['新鎌京橋'][0], early: 30});
+    await page.waitForTimeout(1300);
+    await shot(page, '98-roof-tahara-seaside.png');
+    await teleport(page, {pos: st['信町空港'][1] - 215, speed: 55, notch: -2, next: st['信町空港'][0], early: 30});
+    await page.waitForTimeout(1300);
+    await shot(page, '99-roof-airport.png');
+    await teleport(page, {pos: st['信町空港'][1] - 4.4, speed: 6.5, notch: -2, next: st['信町空港'][0], early: 3});
+    await page.waitForFunction(() => T.get('ドア') === '開', null, {timeout: 30000});
+    await page.waitForTimeout(4900);
+    await shot(page, '95-roof-ropes-up.png');
+    console.log('  page errors:', errors.length ? errors : 'なし');
+    await page.close();
+}
+
+// 駅の近く（屋根・ロープ柵・駅名標が見える所）で止まったまま、1 フレームの処理時間を測る。
+// 止まった場面なので、前の版（SB3=… で .sb3 を変えて）とくらべやすい。対向列車は出さない
+async function measureStation(browser, compiler) {
+    const file = await pack(compiler);
+    const {page, errors} = await openGame(browser, file);
+    await page.evaluate(() => T.set('対向列車_出現率', 0));
+    await startRoute(page, 1);
+    await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
+    const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
+    const out = [];
+    for (const [label, rel] of [['高田の 350m 手前', -350], ['高田の 120m 手前（ホームに入るところ）', -120], ['高田に停車（屋根の下）', 0]]) {
+        await teleport(page, {pos: st['高田'][1] + rel, speed: 0, notch: -8, next: st['高田'][0], early: 60});
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => { T.steps = 0; T.stepMs = 0; });
+        const t0 = Date.now();
+        await page.waitForTimeout(5000);
+        const r = await page.evaluate(() => ({steps: T.steps, stepMs: T.stepMs}));
+        out.push({label, fps: r.steps / ((Date.now() - t0) / 1000), ms: r.stepMs / Math.max(1, r.steps)});
+    }
+    await page.close();
+    return {mode: compiler ? 'コンパイラ（TurboWarp）' : 'インタプリタ（素の Scratch 相当）', out, errors};
 }
 
 // エアポート特快（信町本線 → 高田 → 田原海岸線 → 田原京、10両）
@@ -474,7 +557,19 @@ try {
     if (viaductOnly) {
         await shootViaduct(browser, await pack(true));
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly) {
+    if (roofOnly) {
+        await shootRoof(browser, await pack(true));
+    }
+    if (stationFps) {
+        for (const compiler of [true, false]) {
+            for (let k = 0; k < 2; k++) {
+                const r = await measureStation(browser, compiler);
+                for (const o of r.out) console.log(`  ${r.mode}・${o.label}: ${o.fps.toFixed(1)} fps（1フレームの処理 ${o.ms.toFixed(2)}ms）`);
+                console.log('  errors:', r.errors.length ? r.errors : 'なし');
+            }
+        }
+    }
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly && !roofOnly && !stationFps) {
         const file = await pack(true);
         // 信町本線（夕方の街）
         let {page, errors} = await openGame(browser, file);
@@ -588,7 +683,7 @@ try {
         console.log('  page errors:', errors.length ? errors : 'なし');
         await page.close();
     }
-    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly) {
+    if (!fpsOnly && !airportOnly && !viaductOnly && !tracksOnly && !ropesOnly && !turnoutOnly && !roofOnly && !stationFps) {
         await shootAirportExpress(browser, path.join(BUILD, 'game.html'));
         await shootRopes(browser, path.join(BUILD, 'game.html'));
         await shootViaduct(browser, path.join(BUILD, 'game.html'));
@@ -621,7 +716,7 @@ try {
             await page.close();
         }
     }
-    for (const compiler of airportOnly || tracksOnly || ropesOnly || turnoutOnly ? [] : [true, false]) {
+    for (const compiler of airportOnly || tracksOnly || ropesOnly || turnoutOnly || roofOnly || stationFps ? [] : [true, false]) {
         for (const viaduct of viaductOnly ? [true] : [false, true]) {
             const r = await measureFps(browser, compiler, viaduct);
             console.log(`  ${r.mode}: ${r.fps.toFixed(1)} fps（1フレームの処理 ${r.msPerFrame.toFixed(1)}ms） GPU=${r.gl}  errors=${r.errors.length ? r.errors : 'なし'}`);
