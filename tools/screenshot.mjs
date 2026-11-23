@@ -251,7 +251,7 @@ async function measureStation(browser, compiler) {
     await page.waitForFunction(() => T.get('場面') === '運転中', null, {timeout: 30000});
     const st = await page.evaluate(() => Object.fromEntries(T.get('駅名').map((n, i) => [n, [i + 1, Number(T.get('駅の位置')[i])]])));
     const out = [];
-    for (const [label, rel] of [['高田の 350m 手前', -350], ['高田の 120m 手前（ホームに入るところ）', -120], ['高田に停車（屋根の下）', 0]]) {
+    for (const [label, rel] of [['高田の 350m 手前', -350], ['高田の 120m 手前（ホームに入るところ）', -120], ['高田に停車', 0]]) {
         await teleport(page, {pos: st['高田'][1] + rel, speed: 0, notch: -8, next: st['高田'][0], early: 60});
         await page.waitForTimeout(1500);
         await page.evaluate(() => { T.steps = 0; T.stepMs = 0; });
@@ -688,6 +688,7 @@ try {
         await shootRopes(browser, path.join(BUILD, 'game.html'));
         await shootViaduct(browser, path.join(BUILD, 'game.html'));
         await shootTracks(browser, path.join(BUILD, 'game.html'));
+        await shootRoof(browser, path.join(BUILD, 'game.html'));
         const file = path.join(BUILD, 'game.html');
         // アクシデント（起きる場所と種類を決めて起こし、障害物などの近くへ移って撮る）
         for (const [route, shots] of [
